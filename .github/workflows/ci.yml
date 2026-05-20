@@ -1,0 +1,64 @@
+name: CI
+
+# Build + lint a cada push e pull request. O pipeline falha se qualquer um
+# falhar. Os testes Playwright (test:e2e) rodam num job separado para não
+# bloquear o feedback rápido do lint/build.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: build + lint (Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: pnpm install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm lint
+        run: pnpm lint
+
+      - name: pnpm build
+        run: pnpm build
+
+  e2e:
+    name: e2e mobile-first 360x640 (Playwright)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: pnpm install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: pnpm test:e2e
+        run: pnpm test:e2e
