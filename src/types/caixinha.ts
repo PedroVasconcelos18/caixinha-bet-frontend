@@ -156,11 +156,13 @@ export interface ItemGanhador {
   comprovante: string | null;
 }
 
-/** Um Participante reembolsado no Acerto de Contas modo reembolso (Story 4.4). */
+/** Um Participante reembolsado no Acerto de Contas modo reembolso (Story 4.4/5.2). */
 export interface ItemReembolso {
   email: string;
   /** Money string decimal — ingresso cheio (Taxa devolvida). */
   valorEstorno: string;
+  /** Story 5.2: em_processamento | concluido — null se estorno não disparado. */
+  estadoEstorno: string | null;
 }
 
 /** Resposta de GET /caixinhas/{id}/acerto (Story 4.4, FR-14). */

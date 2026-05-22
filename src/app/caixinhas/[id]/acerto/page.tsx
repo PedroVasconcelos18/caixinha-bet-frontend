@@ -155,6 +155,7 @@ export default function AcertoContasPage({
           {acerto.modo === "premio" && "🏆 Resultado"}
           {acerto.modo === "reembolso" && "Reembolso"}
           {acerto.modo === "indisponivel" && "Ainda não apurada"}
+          {acerto.modo === "cancelada_sem_reembolso" && "Caixinha cancelada"}
         </h1>
       </header>
 
@@ -162,6 +163,13 @@ export default function AcertoContasPage({
         <p className="rounded-md border border-zinc-300 bg-zinc-50 p-3 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
           Esta Caixinha está em <strong>{acerto.estadoCaixinha}</strong> — o
           Acerto de Contas aparece quando ela for apurada.
+        </p>
+      )}
+
+      {acerto.modo === "cancelada_sem_reembolso" && (
+        <p className="rounded-md border border-zinc-300 bg-zinc-50 p-3 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+          Esta caixinha foi cancelada. Como ninguém chegou a pagar o
+          ingresso, não há nada a reembolsar.
         </p>
       )}
 
@@ -245,24 +253,28 @@ export default function AcertoContasPage({
       {acerto.modo === "reembolso" && (
         <>
           <p className="rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-300">
-            Ninguém cravou dessa vez — o dinheiro de todo mundo volta
-            automaticamente, taxa inclusa.
+            O dinheiro de todo mundo volta automaticamente, taxa inclusa.
           </p>
           <ul className="flex flex-col gap-2">
             {acerto.reembolsos.map((r) => (
               <li
                 key={r.email}
-                className="flex justify-between gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800"
+                className="flex flex-col gap-1 rounded-md border border-zinc-200 p-3 dark:border-zinc-800"
               >
-                <span className="truncate text-sm">{r.email}</span>
-                <strong className="text-sm">R$ {r.valorEstorno}</strong>
+                <div className="flex justify-between gap-2">
+                  <span className="truncate text-sm">{r.email}</span>
+                  <strong className="text-sm">R$ {r.valorEstorno}</strong>
+                </div>
+                {/* Story 5.2: estado real do estorno — o app nunca diz
+                    "reembolsado" antes de o Provedor confirmar. */}
+                <EstornoBadge estado={r.estadoEstorno} />
               </li>
             ))}
           </ul>
         </>
       )}
 
-      {acerto.modo !== "indisponivel" && (
+      {(acerto.modo === "premio" || acerto.modo === "reembolso") && (
         <button
           type="button"
           onClick={compartilhar}
@@ -308,6 +320,28 @@ function RepasseBadge({ estado }: { estado: string }) {
       className={`w-fit rounded-full px-2 py-0.5 text-xs font-medium ${classe}`}
     >
       {rotuloRepasse(estado)}
+    </span>
+  );
+}
+
+/**
+ * Badge do estado do estorno de um Participante (Story 5.2).
+ *
+ * O app nunca afirma "reembolsado" antes de o Provedor confirmar — o
+ * estado vem do `EstadoCobranca` real.
+ */
+function EstornoBadge({ estado }: { estado: string | null }) {
+  if (estado === "concluido") {
+    return (
+      <span className="w-fit rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+        reembolsado ✓
+      </span>
+    );
+  }
+  // null ou em_processamento — estorno ainda não confirmado pelo banco.
+  return (
+    <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+      estorno em processamento
     </span>
   );
 }
