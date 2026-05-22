@@ -24,7 +24,7 @@ import {
   definirPalpite,
 } from "@/lib/caixinha";
 import { formatBRL } from "@/lib/money";
-import { estadoVisual, bandeiraDe } from "@/lib/ui";
+import { estadoVisual, bandeiraDe, formatarDataHora } from "@/lib/ui";
 import { useToast } from "@/components/Toasts";
 import TimelineEstado from "@/components/TimelineEstado";
 import { Botao, BotaoLink, Card, Input, StatusPill, VoltarLink, cx } from "@/components/ui";
@@ -221,10 +221,14 @@ export default function CaixinhaDetalhePage({
             <SideRow k="Nº de ganhadores" v={String(caixinha.numeroGanhadores)} />
             <SideRow
               k="Prazo de entrada"
-              v={caixinha.prazoEntrada}
+              v={formatarDataHora(caixinha.prazoEntrada)}
               icone={<Calendar size={13} />}
             />
-            <SideRow k="Apuração" v={caixinha.dataApuracao} icone={<Calendar size={13} />} />
+            <SideRow
+              k="Apuração"
+              v={formatarDataHora(caixinha.dataApuracao)}
+              icone={<Calendar size={13} />}
+            />
             <SideRow k="Arrecadado" v={formatBRL(caixinha.totalCustodiado)} />
             <SideRow k="Taxa de serviço" v={`− ${formatBRL(caixinha.taxaServico)}`} />
             <div className="mt-3 flex items-center justify-between rounded-xl border border-gold/30 bg-gold/10 px-4 py-3.5">

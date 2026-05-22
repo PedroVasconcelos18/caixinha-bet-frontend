@@ -6,7 +6,7 @@ import { ApiError } from "@/lib/api";
 import { atualizarChavePix, me, type Sessao } from "@/lib/auth";
 import { aceitarConvite, buscarConvite, definirPalpite } from "@/lib/caixinha";
 import { formatBRL } from "@/lib/money";
-import { estadoVisual, bandeiraDe } from "@/lib/ui";
+import { estadoVisual, bandeiraDe, formatarDataHora } from "@/lib/ui";
 import { useToast } from "@/components/Toasts";
 import {
   Botao,
@@ -220,7 +220,7 @@ export default function ConvitePage({
         </div>
         <div className="flex items-center justify-between py-2 text-[13px]">
           <span className="text-muted">Prazo de entrada</span>
-          <span>{convite.prazoEntrada}</span>
+          <span>{formatarDataHora(convite.prazoEntrada)}</span>
         </div>
       </Card>
 

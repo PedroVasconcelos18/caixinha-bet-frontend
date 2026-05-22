@@ -99,3 +99,28 @@ export function bandeiraDe(nome = ""): string {
     .replace(/[\u0300-\u036f]/g, "");
   return BANDEIRAS[chave] ?? "⚽";
 }
+
+/* ----------------------------------------------------------------------- */
+/* Datas — formatação no padrão brasileiro.                                 */
+/* ----------------------------------------------------------------------- */
+
+/**
+ * Formata uma data ISO-8601 (vinda da API ou do wizard) no padrão
+ * brasileiro `dd/mm/aaaa HH:mm` — 24h, sem AM/PM. Independe do locale do
+ * navegador: o formato é fixado explicitamente.
+ *
+ * String vazia ou data inválida → `"—"`.
+ */
+export function formatarDataHora(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}

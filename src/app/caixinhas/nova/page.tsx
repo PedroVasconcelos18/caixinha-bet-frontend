@@ -18,7 +18,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { criarCaixinha, sugerirResultados } from "@/lib/caixinha";
 import { Decimal, moneyFromApi, moneyToApi, formatBRL } from "@/lib/money";
-import { bandeiraDe } from "@/lib/ui";
+import { bandeiraDe, formatarDataHora } from "@/lib/ui";
 import { useToast } from "@/components/Toasts";
 import { Botao, Card, Callout, Campo, Input, Chip, VoltarLink, cx } from "@/components/ui";
 
@@ -44,7 +44,7 @@ interface Dados {
   minimoParticipantes: string;
   /** v5 FR-1: "1" | "2" | "3" (string para casar com inputs). */
   numeroGanhadores: string;
-  prazoEntrada: string; // input datetime-local (sem timezone)
+  prazoEntrada: string; // "YYYY-MM-DDTHH:mm" (date + time, sem timezone)
   dataApuracao: string;
   rotulosResultados: string[];
   /** Lista de e-mails (gerenciada como chips, não textarea). */
@@ -68,6 +68,30 @@ const TAXA_SERVICO = "10.00";
 const INGRESSO_MIN = "5.00";
 const PASSOS = ["Confronto", "Resultados", "Financeiro", "Prazos", "Convidados", "Revisão"];
 const RE_EMAIL = /\S+@\S+\.\S+/;
+
+/* ----------------------------------------------------------------------- */
+/* Prazos — datas como `date` + `time` separados.                          */
+/*                                                                          */
+/* `<input type="datetime-local">` renderiza a máscara conforme o locale do */
+/* navegador (mm/dd/aaaa + AM/PM em en-US). Não há atributo que force o     */
+/* padrão BR. Por isso usamos `date` + `time` separados: o `time` é sempre  */
+/* 24h e o rótulo textual comunica `dd/mm/aaaa`. O estado do wizard segue   */
+/* guardando a string `YYYY-MM-DDTHH:mm` (forma do datetime-local) para que */
+/* `confirmar()` e a validação cross-field fiquem inalterados.              */
+/* ----------------------------------------------------------------------- */
+
+/** Combina data + hora numa string `datetime-local`; vazia se faltar algum. */
+function juntarDataHora(data: string, hora: string): string {
+  return data && hora ? `${data}T${hora}` : "";
+}
+
+/** Data local de hoje (`YYYY-MM-DD`) para o atributo `min` do `date`. */
+function hojeLocal(): string {
+  const n = new Date();
+  const mes = String(n.getMonth() + 1).padStart(2, "0");
+  const dia = String(n.getDate()).padStart(2, "0");
+  return `${n.getFullYear()}-${mes}-${dia}`;
+}
 
 export default function NovaCaixinhaPage() {
   const router = useRouter();
@@ -113,6 +137,11 @@ export default function NovaCaixinhaPage() {
     } else if (etapa === 4) {
       if (!d.prazoEntrada) e.push("Prazo de entrada é obrigatório.");
       if (!d.dataApuracao) e.push("Data de apuração é obrigatória.");
+      // Prazo de entrada não pode ser no passado: ele é imutável após a
+      // criação e um prazo já vencido nasce com o palpite congelado.
+      if (d.prazoEntrada && new Date(d.prazoEntrada) <= new Date()) {
+        e.push("O prazo de entrada deve ser uma data futura.");
+      }
       if (
         d.prazoEntrada &&
         d.dataApuracao &&
@@ -395,21 +424,24 @@ export default function NovaCaixinhaPage() {
         {etapa === 4 && (
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Campo label="Data limite de entrada" hint="Último dia para aceitar e pagar">
-                <Input
-                  type="datetime-local"
-                  value={d.prazoEntrada}
-                  onChange={(e) => setD({ ...d, prazoEntrada: e.target.value })}
-                />
-              </Campo>
-              <Campo label="Data de apuração do resultado" hint="Quando o vencedor será definido">
-                <Input
-                  type="datetime-local"
-                  value={d.dataApuracao}
-                  onChange={(e) => setD({ ...d, dataApuracao: e.target.value })}
-                />
-              </Campo>
+              <CampoDataHora
+                label="Data limite de entrada"
+                hint="Último dia para aceitar e pagar (dd/mm/aaaa)"
+                minData={hojeLocal()}
+                onChange={(v) => setD({ ...d, prazoEntrada: v })}
+              />
+              <CampoDataHora
+                label="Data de apuração do resultado"
+                hint="Quando o vencedor será definido (dd/mm/aaaa)"
+                minData={hojeLocal()}
+                onChange={(v) => setD({ ...d, dataApuracao: v })}
+              />
             </div>
+            {d.prazoEntrada && new Date(d.prazoEntrada) <= new Date() && (
+              <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+                O prazo de entrada deve ser uma data futura.
+              </Callout>
+            )}
             {d.prazoEntrada &&
               d.dataApuracao &&
               new Date(d.dataApuracao) <= new Date(d.prazoEntrada) && (
@@ -520,6 +552,62 @@ function CalcPotencial({ valorIngresso, minimo }: { valorIngresso: string; minim
 }
 
 /* ----------------------------------------------------------------------- */
+/* CampoDataHora — par de inputs `date` + `time` (etapa 4 / Prazos).        */
+/*                                                                          */
+/* NÃO usa <Campo> (que é <label>): um <label> não deve envolver múltiplos  */
+/* controles. O `date` é nativo (máscara segue o locale, mas o rótulo       */
+/* "dd/mm/aaaa" deixa o formato esperado explícito); o `time` é sempre 24h. */
+/*                                                                          */
+/* Estado de `data` e `hora` vive AQUI, não no wizard: combinar os dois     */
+/* numa só string e perder a parte ainda-vazia faria o campo já preenchido  */
+/* esvaziar sozinho enquanto o usuário ainda digita. Para fora, propaga a   */
+/* string `YYYY-MM-DDTHH:mm` (vazia enquanto incompleta) — o que o wizard   */
+/* espera em `prazoEntrada`/`dataApuracao`.                                 */
+/* ----------------------------------------------------------------------- */
+function CampoDataHora({
+  label,
+  hint,
+  minData,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  minData: string;
+  onChange: (v: string) => void;
+}) {
+  const [data, setData] = useState("");
+  const [hora, setHora] = useState("");
+
+  function atualizar(novaData: string, novaHora: string) {
+    setData(novaData);
+    setHora(novaHora);
+    onChange(juntarDataHora(novaData, novaHora));
+  }
+
+  return (
+    <div className="flex flex-col">
+      <span className="mb-2 text-[13px] font-semibold">{label}</span>
+      <div className="flex gap-2">
+        <Input
+          type="date"
+          aria-label={`${label} — data`}
+          value={data}
+          min={minData}
+          onChange={(e) => atualizar(e.target.value, hora)}
+        />
+        <Input
+          type="time"
+          aria-label={`${label} — hora`}
+          value={hora}
+          onChange={(e) => atualizar(data, e.target.value)}
+        />
+      </div>
+      <span className="mt-1.5 text-[11.5px] leading-snug text-muted">{hint}</span>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
 /* Revisao — passo 6.                                                      */
 /* ----------------------------------------------------------------------- */
 function Revisao({ d }: { d: Dados }) {
@@ -550,8 +638,8 @@ function Revisao({ d }: { d: Dados }) {
         <ItemRevisao k="Valor de ingresso" v={formatBRL(v)} />
         <ItemRevisao k="Mínimo de pagantes" v={d.minimoParticipantes || "—"} />
         <ItemRevisao k="Nº de ganhadores" v={String(g)} />
-        <ItemRevisao k="Prazo de entrada" v={d.prazoEntrada || "—"} />
-        <ItemRevisao k="Apuração" v={d.dataApuracao || "—"} />
+        <ItemRevisao k="Prazo de entrada" v={formatarDataHora(d.prazoEntrada)} />
+        <ItemRevisao k="Apuração" v={formatarDataHora(d.dataApuracao)} />
         <ItemRevisao k="Convidados" v={`${d.emailsConvidados.length + 1} pessoas`} />
       </div>
 
