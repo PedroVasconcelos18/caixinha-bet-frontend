@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
 import { criarCaixinha, sugerirResultados } from "@/lib/caixinha";
+import { Decimal, moneyFromApi, moneyToApi } from "@/lib/money";
 
 /**
  * Wizard de criação de Caixinha (Story 2.2).
@@ -26,6 +27,8 @@ interface Dados {
   ladoB: string;
   valorIngresso: string;
   minimoParticipantes: string;
+  /** v5 FR-1: "1" | "2" | "3" (mantido como string para casar com inputs). */
+  numeroGanhadores: string;
   prazoEntrada: string; // input datetime-local (sem timezone)
   dataApuracao: string;
   rotulosResultados: string[];
@@ -38,6 +41,7 @@ const VAZIO: Dados = {
   ladoB: "",
   valorIngresso: "",
   minimoParticipantes: "",
+  numeroGanhadores: "1", // default; usuário pode trocar p/ 2 ou 3 na etapa 3
   prazoEntrada: "",
   dataApuracao: "",
   rotulosResultados: ["", ""],
@@ -66,13 +70,30 @@ export default function NovaCaixinhaPage() {
         e.push("Pelo menos 2 Resultados Possíveis com rótulo não-vazio.");
       }
     } else if (etapa === 3) {
-      const v = parseFloat(d.valorIngresso);
-      if (!d.valorIngresso || isNaN(v) || v < 5) {
+      // Dinheiro: comparação via Decimal (NUNCA via parseFloat — NFR-1/AR-8).
+      // Try/catch porque moneyFromApi lança em string inválida.
+      let valorOk = false;
+      try {
+        if (d.valorIngresso.trim().length > 0) {
+          const v = moneyFromApi(d.valorIngresso);
+          valorOk = v.gte(new Decimal("5.00"));
+        }
+      } catch {
+        valorOk = false;
+      }
+      if (!valorOk) {
         e.push("Valor de ingresso deve ser pelo menos R$ 5,00.");
       }
       const m = parseInt(d.minimoParticipantes, 10);
       if (!d.minimoParticipantes || isNaN(m) || m < 2) {
         e.push("Mínimo de Participantes deve ser >= 2.");
+      }
+      // v5 FR-1: Nº de Ganhadores (1, 2 ou 3) e ≤ Mínimo de Participantes.
+      const g = parseInt(d.numeroGanhadores, 10);
+      if (!d.numeroGanhadores || isNaN(g) || g < 1 || g > 3) {
+        e.push("Nº de Ganhadores deve ser 1, 2 ou 3.");
+      } else if (!isNaN(m) && g > m) {
+        e.push("Nº de Ganhadores não pode ser maior que o Mínimo de Participantes.");
       }
     } else if (etapa === 4) {
       if (!d.prazoEntrada) e.push("Prazo de entrada é obrigatório.");
@@ -115,8 +136,11 @@ export default function NovaCaixinhaPage() {
         titulo: d.titulo.trim(),
         ladoA: d.ladoA.trim(),
         ladoB: d.ladoB.trim(),
-        valorIngresso: parseFloat(d.valorIngresso).toFixed(2),
+        // moneyToApi(moneyFromApi(...)) normaliza para 2 casas decimais sem
+        // passar por Number (NFR-1/AR-8). Já validamos na etapa 3.
+        valorIngresso: moneyToApi(moneyFromApi(d.valorIngresso)),
         minimoParticipantes: parseInt(d.minimoParticipantes, 10),
+        numeroGanhadores: parseInt(d.numeroGanhadores, 10),
         prazoEntrada: new Date(d.prazoEntrada).toISOString(),
         dataApuracao: new Date(d.dataApuracao).toISOString(),
         rotulosResultados: d.rotulosResultados
@@ -296,6 +320,33 @@ export default function NovaCaixinhaPage() {
               (libera pagamento) e o mínimo de <em>pagantes</em> (forma a
               Caixinha).
             </p>
+            <Field label="Nº de Ganhadores">
+              <div className="flex gap-2">
+                {[1, 2, 3].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() =>
+                      setD({ ...d, numeroGanhadores: String(n) })
+                    }
+                    aria-pressed={d.numeroGanhadores === String(n)}
+                    className={
+                      "min-h-[44px] flex-1 rounded-md border px-4 text-sm font-medium " +
+                      (d.numeroGanhadores === String(n)
+                        ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                        : "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
+                    }
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <p className="text-xs text-zinc-600">
+              Entre quantos o Prêmio é rateado. Se houver mais palpiteiros
+              corretos que o Nº de Ganhadores na apuração, <em>você</em>{" "}
+              (Organizador) escolhe quem leva.
+            </p>
           </>
         )}
 
@@ -400,9 +451,20 @@ function Field({
 }
 
 function Revisao({ d }: { d: Dados }) {
-  const v = parseFloat(d.valorIngresso || "0");
+  // Aritmética monetária via Decimal — regra dura NFR-1/AR-8.
+  let v: Decimal;
+  try {
+    v = d.valorIngresso ? moneyFromApi(d.valorIngresso) : new Decimal(0);
+  } catch {
+    v = new Decimal(0);
+  }
   const m = parseInt(d.minimoParticipantes || "0", 10);
-  const premioMax = (v * m - 10).toFixed(2);
+  const g = parseInt(d.numeroGanhadores || "1", 10) || 1;
+  const taxa = new Decimal("10");
+  const potencialBruto = v.times(m).minus(taxa);
+  const premioMax = (potencialBruto.isPositive() ? potencialBruto : new Decimal(0)).toFixed(2);
+  // Decimal.div arredonda; usamos as 2 casas finais.
+  const porGanhador = (potencialBruto.isPositive() ? potencialBruto.div(g) : new Decimal(0)).toFixed(2);
   return (
     <div className="flex flex-col gap-3 text-sm">
       <Linha k="Título" v={d.titulo} />
@@ -414,10 +476,14 @@ function Revisao({ d }: { d: Dados }) {
           .filter((r) => r.length > 0)
           .join(", ")}
       />
-      <Linha k="Valor do ingresso" v={`R$ ${parseFloat(d.valorIngresso || "0").toFixed(2)}`} />
+      <Linha k="Valor do ingresso" v={`R$ ${v.toFixed(2)}`} />
       <Linha
         k="Mínimo único"
         v={`${d.minimoParticipantes} (aceites E pagantes — mesmo número)`}
+      />
+      <Linha
+        k="Nº de Ganhadores"
+        v={`${g} (entre quantos o Prêmio é rateado)`}
       />
       <Linha
         k="Prazo de entrada"
@@ -432,6 +498,12 @@ function Revisao({ d }: { d: Dados }) {
         <p className="mt-1">
           Prêmio máximo (se todos pagarem) = Σ ingressos − Taxa = R$ {premioMax}
         </p>
+        {g > 1 && (
+          <p className="mt-1">
+            Rateado entre {g} Ganhador(es) = R$ {porGanhador} por Ganhador
+            (resíduo de centavos vai ao 1º por ordem de pagamento).
+          </p>
+        )}
       </div>
       <div className="rounded-md border border-zinc-300 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950">
         <p className="font-medium">Estas regras ficam imutáveis após criar:</p>
@@ -440,10 +512,18 @@ function Revisao({ d }: { d: Dados }) {
           <li>Prazo de entrada</li>
           <li>Data de apuração</li>
           <li>Resultados Possíveis</li>
+          <li>Nº de Ganhadores</li>
         </ul>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
           Você ainda pode convidar mais Participantes depois (até o prazo).
         </p>
+        {g < m && (
+          <p className="mt-2 text-xs text-zinc-700 dark:text-zinc-300">
+            <strong>Atenção:</strong> se na apuração houver mais palpiteiros
+            corretos que {g}, <em>você</em> (Organizador) seleciona quem são
+            os Ganhadores entre eles.
+          </p>
+        )}
       </div>
     </div>
   );

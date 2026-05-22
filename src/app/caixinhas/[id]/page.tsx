@@ -98,6 +98,18 @@ export default function CaixinhaDetalhePage({
     caixinha.estado === "coletando_convites" ||
     caixinha.estado === "coletando_pagamentos";
 
+  // Story 3.2 (FR-7): botão "Pagar ingresso" visível quando a Caixinha
+  // está em coletando_pagamentos E o Participante logado está `aceito`
+  // com palpite escolhido. O back revalida tudo de novo (defesa real).
+  const meuParticipante = caixinha.participantes.find(
+    (p) => p.email === meuEmail,
+  );
+  const podePagar =
+    caixinha.estado === "coletando_pagamentos" &&
+    meuParticipante?.status === "aceito" &&
+    meuParticipante?.palpiteResultadoPossivelId != null;
+  const jaPagando = meuParticipante?.status === "pagamento_iniciado";
+
   return (
     <main className="flex flex-1 flex-col gap-4 p-6">
       <header>
@@ -126,8 +138,17 @@ export default function CaixinhaDetalhePage({
           k="Mínimo de Participantes"
           v={String(caixinha.minimoParticipantes)}
         />
+        <Linha
+          k="Nº de Ganhadores"
+          v={String(caixinha.numeroGanhadores)}
+        />
         <Linha k="Taxa de Serviço" v={`R$ ${caixinha.taxaServico}`} />
         <Linha k="Prêmio máximo teórico" v={`R$ ${caixinha.premioMaximoTeorico}`} />
+        <Linha
+          k="Total custodiado (confirmado)"
+          v={`R$ ${caixinha.totalCustodiado}`}
+        />
+        <Linha k="Prêmio potencial" v={`R$ ${caixinha.premioPotencial}`} />
         <Linha k="Prazo de entrada" v={caixinha.prazoEntrada} />
         <Linha k="Data de apuração" v={caixinha.dataApuracao} />
       </section>
@@ -143,19 +164,40 @@ export default function CaixinhaDetalhePage({
 
       <section>
         <h2 className="text-sm font-medium">Participantes</h2>
-        <ul className="mt-2 text-sm">
+        <p className="mt-1 text-xs text-zinc-500">
+          Transparência total: todo mundo vê quem aceitou, quem está pagando
+          e quem já pagou. Sem depender da palavra de ninguém.
+        </p>
+        <ul className="mt-2 flex flex-col gap-2 text-sm">
           {caixinha.participantes.map((p) => (
-            <li key={p.email} className="flex justify-between">
-              <span>
-                {p.email} {p.dono && <em className="text-xs">(dono)</em>}
-              </span>
-              <span className="text-zinc-600 dark:text-zinc-400">
-                {p.status}
-              </span>
+            <li
+              key={p.email}
+              className="flex flex-col gap-0.5 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
+            >
+              <div className="flex justify-between gap-2">
+                <span className="truncate">
+                  {p.email} {p.dono && <em className="text-xs">(dono)</em>}
+                </span>
+                <StatusBadge status={p.status} />
+              </div>
+              {p.palpiteRotulo && (
+                <span className="text-xs text-zinc-500">
+                  Palpite: {p.palpiteRotulo}
+                </span>
+              )}
             </li>
           ))}
         </ul>
       </section>
+
+      {(podePagar || jaPagando) && (
+        <Link
+          href={`/caixinhas/${caixinha.id}/pagamento`}
+          className="flex min-h-[48px] items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {jaPagando ? "Ver pagamento PIX" : "Pagar ingresso via PIX"}
+        </Link>
+      )}
 
       {souDono && aceitaNovosConvites && (
         <ConvidarMais
@@ -173,6 +215,48 @@ function Linha({ k, v }: { k: string; v: string }) {
       <span className="text-zinc-500">{k}</span>
       <span className="text-right">{v}</span>
     </div>
+  );
+}
+
+/**
+ * Badge do Status do Participante (Story 3.5, FR-10 AC-2).
+ *
+ * Rótulo amigável (não o enum cru) e cor distinta — `pagamento_iniciado`
+ * NÃO se confunde com `aceito`: quem tem cobrança em aberto ("pagando…")
+ * é visualmente diferente de quem só aceitou.
+ */
+function StatusBadge({ status }: { status: string }) {
+  const mapa: Record<string, { texto: string; classe: string }> = {
+    convidado: {
+      texto: "convidado",
+      classe: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+    },
+    aceito: {
+      texto: "aceitou",
+      classe:
+        "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+    },
+    pagamento_iniciado: {
+      texto: "pagando…",
+      classe:
+        "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    },
+    pago: {
+      texto: "pagou ✓",
+      classe:
+        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+    },
+  };
+  const info = mapa[status] ?? {
+    texto: status,
+    classe: "bg-zinc-100 text-zinc-600",
+  };
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${info.classe}`}
+    >
+      {info.texto}
+    </span>
   );
 }
 

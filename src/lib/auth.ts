@@ -15,6 +15,14 @@ import { ApiError, apiFetch, readApiResponse } from "./api";
 
 export interface Sessao {
   email: string;
+  /** v5 FR-5: chave PIX cadastrada no perfil, ou `null` se ainda não. */
+  chavePix: string | null;
+  /** v5 FR-16: nome do perfil de pagamento, ou `null`. */
+  nomeCompleto: string | null;
+  /** v5 FR-16: CPF (só dígitos) do perfil de pagamento, ou `null`. */
+  cpf: string | null;
+  /** v5 Story 3.2: true se nome+CPF+chave PIX estão todos preenchidos. */
+  perfilPagamentoCompleto: boolean;
 }
 
 export async function solicitarAcesso(
@@ -76,4 +84,53 @@ export async function me(): Promise<Sessao> {
 export async function sair(): Promise<void> {
   const resp = await apiFetch("/auth/sair", { method: "POST" });
   await readApiResponse(resp);
+}
+
+/**
+ * Atualiza a chave PIX de recebimento no perfil (Story 2.5 v5).
+ *
+ * `PUT /auth/me/chave-pix`. Retorna a sessão atualizada. 422 se a chave
+ * estiver vazia (validação Bean Validation @NotBlank).
+ */
+export async function atualizarChavePix(chavePix: string): Promise<Sessao> {
+  const resp = await apiFetch("/auth/me/chave-pix", {
+    method: "PUT",
+    body: JSON.stringify({ chavePix }),
+  });
+  const body = await readApiResponse<Sessao>(resp);
+  if (!body) {
+    throw new ApiError({
+      type: "about:blank",
+      title: "Resposta inesperada",
+      status: 500,
+      detail: "/auth/me/chave-pix devolveu corpo vazio",
+    });
+  }
+  return body;
+}
+
+/**
+ * Atualiza o perfil de pagamento — nome + CPF (Story 3.2 v5).
+ *
+ * `PUT /auth/me/perfil-pagamento`. Exigidos pelo Asaas para criar o
+ * customer. 422 se o CPF for inválido.
+ */
+export async function atualizarPerfilPagamento(
+  nomeCompleto: string,
+  cpf: string,
+): Promise<Sessao> {
+  const resp = await apiFetch("/auth/me/perfil-pagamento", {
+    method: "PUT",
+    body: JSON.stringify({ nomeCompleto, cpf }),
+  });
+  const body = await readApiResponse<Sessao>(resp);
+  if (!body) {
+    throw new ApiError({
+      type: "about:blank",
+      title: "Resposta inesperada",
+      status: 500,
+      detail: "/auth/me/perfil-pagamento devolveu corpo vazio",
+    });
+  }
+  return body;
 }

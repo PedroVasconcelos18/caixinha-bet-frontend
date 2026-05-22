@@ -13,6 +13,8 @@ export interface CriarCaixinhaRequest {
   /** Money como string decimal (ex.: "40.00"). */
   valorIngresso: string;
   minimoParticipantes: number;
+  /** v5 (FR-1): 1, 2 ou 3 — entre quantos o Prêmio é rateado. ≤ minimoParticipantes. */
+  numeroGanhadores: number;
   /** ISO 8601 UTC. */
   prazoEntrada: string;
   /** ISO 8601 UTC. */
@@ -35,6 +37,8 @@ export interface ParticipanteResumoResponse {
   status: string;
   /** Story 2.5: id do Resultado Possível escolhido, ou null. */
   palpiteResultadoPossivelId: number | null;
+  /** Story 3.5: rótulo legível do Palpite (ex.: "Vitória do Brasil"), ou null. */
+  palpiteRotulo: string | null;
 }
 
 export interface CaixinhaResponse {
@@ -44,12 +48,18 @@ export interface CaixinhaResponse {
   ladoB: string;
   valorIngresso: string;
   minimoParticipantes: number;
+  /** v5 (FR-1): 1, 2 ou 3. */
+  numeroGanhadores: number;
   prazoEntrada: string;
   dataApuracao: string;
   /** Enum snake_case do back: coletando_convites, etc. */
   estado: string;
   taxaServico: string;
   premioMaximoTeorico: string;
+  /** Story 3.5: valorIngresso × nº de Participantes `pago` (Money string). */
+  totalCustodiado: string;
+  /** Story 3.5: max(totalCustodiado − taxa, 0) (Money string). */
+  premioPotencial: string;
   criadoEm: string;
   resultadosPossiveis: ResultadoResponse[];
   participantes: ParticipanteResumoResponse[];
@@ -90,4 +100,19 @@ export interface ParticipanteResponse {
   status: string;
   dono: boolean;
   palpiteResultadoPossivelId: number | null;
+}
+
+/** Resposta de POST/GET /caixinhas/{id}/cobranca (Story 3.2, FR-7). */
+export interface CobrancaResponse {
+  cobrancaId: string;
+  /** Código PIX copia-e-cola (BR-Code). */
+  copiaECola: string;
+  /** Imagem do QR code em base64 — usar em <img src="data:image/png;base64,...">. */
+  qrCodeBase64: string;
+  /** ISO 8601 UTC. */
+  expiraEm: string;
+  /** Money string decimal (ex.: "40.00"). */
+  valor: string;
+  /** Estado da cobrança: ativa/invalidada/expirada/confirmada. */
+  estado: string;
 }

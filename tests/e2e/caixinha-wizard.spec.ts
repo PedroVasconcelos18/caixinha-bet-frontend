@@ -73,6 +73,38 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 		await expect(page.locator("ul[role=alert]")).toContainText(/R\$ 5,00/i);
 	});
 
+	test("v5: Nº de Ganhadores > Mínimo bloqueia avanço (FR-1 v5)", async ({
+		page,
+	}) => {
+		await page.context().addCookies([
+			{
+				name: "caixinhabet_sessao",
+				value: "fake-presence",
+				url: "http://localhost:3000",
+			},
+		]);
+		await page.goto("/caixinhas/nova");
+
+		await page.getByLabel("Título").fill("Brasil x Marrocos");
+		await page.getByLabel("Lado A").fill("Brasil");
+		await page.getByLabel("Lado B").fill("Marrocos");
+		await page.getByRole("button", { name: /Próximo/ }).click();
+
+		await page.getByLabel("Resultado 1").fill("Vitória A");
+		await page.getByLabel("Resultado 2").fill("Vitória B");
+		await page.getByRole("button", { name: /Próximo/ }).click();
+
+		// Etapa 3: Mínimo=2, Nº de Ganhadores=3 → inválido (3 > 2).
+		await page.getByLabel("Valor de ingresso (R$)").fill("40.00");
+		await page.getByLabel("Mínimo de Participantes").fill("2");
+		await page.getByRole("button", { name: "3" }).click();
+		await page.getByRole("button", { name: /Próximo/ }).click();
+
+		await expect(page.locator("ul[role=alert]")).toContainText(
+			/Nº de Ganhadores/i,
+		);
+	});
+
 	test("fluxo feliz: 6 etapas + POST + navega para /caixinhas/{id}", async ({
 		page,
 	}) => {
@@ -91,18 +123,27 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 			ladoB: "Marrocos",
 			valorIngresso: "40.00",
 			minimoParticipantes: 5,
+			numeroGanhadores: 1,
 			prazoEntrada: "2026-06-01T12:00:00Z",
 			dataApuracao: "2026-06-01T14:00:00Z",
 			estado: "coletando_convites",
 			taxaServico: "10.00",
 			premioMaximoTeorico: "190.00",
+			totalCustodiado: "0.00",
+			premioPotencial: "0.00",
 			criadoEm: "2026-05-20T10:00:00Z",
 			resultadosPossiveis: [
 				{ ordem: 0, rotulo: "Vitória A" },
 				{ ordem: 1, rotulo: "Vitória B" },
 			],
 			participantes: [
-				{ email: "rafael@local", dono: true, status: "convidado" },
+				{
+					email: "rafael@local",
+					dono: true,
+					status: "convidado",
+					palpiteResultadoPossivelId: null,
+					palpiteRotulo: null,
+				},
 			],
 		};
 
@@ -303,13 +344,21 @@ test.describe("/caixinhas/[id] → Convidar mais (Story 2.4)", () => {
 		estado: "coletando_convites",
 		taxaServico: "10.00",
 		premioMaximoTeorico: "190.00",
+		totalCustodiado: "0.00",
+		premioPotencial: "0.00",
 		criadoEm: "2026-05-20T10:00:00Z",
 		resultadosPossiveis: [
 			{ ordem: 0, rotulo: "Vitória A" },
 			{ ordem: 1, rotulo: "Vitória B" },
 		],
 		participantes: [
-			{ email: "rafael@local", dono: true, status: "convidado" },
+			{
+				email: "rafael@local",
+				dono: true,
+				status: "convidado",
+				palpiteResultadoPossivelId: null,
+				palpiteRotulo: null,
+			},
 		],
 	};
 
@@ -326,7 +375,7 @@ test.describe("/caixinhas/[id] → Convidar mais (Story 2.4)", () => {
 			r.fulfill({
 				status: 200,
 				contentType: "application/json",
-				body: JSON.stringify({ email: "rafael@local" }),
+				body: JSON.stringify({ email: "rafael@local", chavePix: "rafael@pix" }),
 			}),
 		);
 		// Escopar para localhost:8080 (a API) — sem isso a route intercepta
@@ -375,7 +424,7 @@ test.describe("/caixinhas/[id] → Convidar mais (Story 2.4)", () => {
 			r.fulfill({
 				status: 200,
 				contentType: "application/json",
-				body: JSON.stringify({ email: "outro@local" }),
+				body: JSON.stringify({ email: "outro@local", chavePix: null }),
 			}),
 		);
 		await page.route("http://localhost:8080/caixinhas/42", (r) =>
@@ -432,6 +481,14 @@ test.describe("/convites/[id] (Story 2.5)", () => {
 				url: "http://localhost:3000",
 			},
 		]);
+		// v5 Story 2.5: /convites/[id] agora chama /auth/me para saber se há chave PIX.
+		await page.route("http://localhost:8080/auth/me", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: "alice@pix" }),
+			}),
+		);
 		await page.route("http://localhost:8080/caixinhas/99/convite", (r) =>
 			r.fulfill({
 				status: 200,
@@ -460,6 +517,14 @@ test.describe("/convites/[id] (Story 2.5)", () => {
 			eu: { ...conviteFuturo.eu, status: "aceito" },
 		};
 		let putCalled = false;
+		// v5: mock /auth/me com chave PIX cadastrada para não disparar o form.
+		await page.route("http://localhost:8080/auth/me", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: "alice@pix" }),
+			}),
+		);
 		await page.route("http://localhost:8080/caixinhas/99/convite", (r) =>
 			r.fulfill({
 				status: 200,
@@ -502,6 +567,13 @@ test.describe("/convites/[id] (Story 2.5)", () => {
 				url: "http://localhost:3000",
 			},
 		]);
+		await page.route("http://localhost:8080/auth/me", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: "alice@pix" }),
+			}),
+		);
 		await page.route("http://localhost:8080/caixinhas/99/convite", (r) =>
 			r.fulfill({
 				status: 200,
@@ -516,6 +588,71 @@ test.describe("/convites/[id] (Story 2.5)", () => {
 		await expect(radio).toBeDisabled();
 	});
 
+	test("v5 FR-5: sem chave PIX, clicar em radio abre form e palpita após salvar", async ({
+		page,
+	}) => {
+		await page.context().addCookies([
+			{
+				name: "caixinhabet_sessao",
+				value: "fake",
+				url: "http://localhost:3000",
+			},
+		]);
+		const conviteAceito = {
+			...conviteFuturo,
+			eu: { ...conviteFuturo.eu, status: "aceito" },
+		};
+		// 1ª chamada: chavePix=null. Após PUT, retorna 'meu@pix' e os
+		// próximos GETs já têm chave.
+		let chaveAtual: string | null = null;
+		await page.route("http://localhost:8080/auth/me", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: chaveAtual }),
+			}),
+		);
+		await page.route("http://localhost:8080/auth/me/chave-pix", (r) => {
+			chaveAtual = "alice@pix";
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: chaveAtual }),
+			});
+		});
+		await page.route("http://localhost:8080/caixinhas/99/convite", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify(conviteAceito),
+			}),
+		);
+		await page.route("http://localhost:8080/caixinhas/99/palpite", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					id: 1,
+					caixinhaId: 99,
+					email: "alice@local",
+					status: "aceito",
+					dono: false,
+					palpiteResultadoPossivelId: 10,
+				}),
+			}),
+		);
+
+		await page.goto("/convites/99");
+		// Clicar em radio NÃO palpita ainda — abre o form de chave PIX.
+		await page.getByRole("radio", { name: "Vitória Brasil" }).click();
+		await expect(page.getByText(/Cadastre sua chave PIX/i)).toBeVisible();
+
+		// Preenche a chave e salva — o palpite pendente é retomado.
+		await page.getByLabel(/Sua chave PIX/i).fill("alice@pix");
+		await page.getByRole("button", { name: /Salvar e palpitar/i }).click();
+		await expect(page.getByText(/Palpite salvo/i)).toBeVisible();
+	});
+
 	test("404 → tela amigável 'Convite não encontrado'", async ({ page }) => {
 		await page.context().addCookies([
 			{
@@ -524,6 +661,13 @@ test.describe("/convites/[id] (Story 2.5)", () => {
 				url: "http://localhost:3000",
 			},
 		]);
+		await page.route("http://localhost:8080/auth/me", (r) =>
+			r.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ email: "alice@local", chavePix: null }),
+			}),
+		);
 		await page.route("http://localhost:8080/caixinhas/99/convite", (r) =>
 			r.fulfill({
 				status: 404,
