@@ -27,6 +27,13 @@ export interface ProblemDetails {
   detail?: string;
   /** URI da ocorrência específica (opcional). */
   instance?: string;
+  /**
+   * Extensões RFC 9457 §3.2 — campos extras específicos do problema.
+   * Ex.: `violations` (criação de Caixinha inválida), `candidatos`
+   * (apuração com mais palpiteiros corretos que vagas). O caller faz o
+   * cast para o tipo esperado conforme o `type`.
+   */
+  [extensao: string]: unknown;
 }
 
 /** Base da API, vinda de env (ver `.env.example`). */

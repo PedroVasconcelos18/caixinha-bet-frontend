@@ -5,7 +5,7 @@ import { use } from "react";
 import Link from "next/link";
 import { ApiError } from "@/lib/api";
 import { me } from "@/lib/auth";
-import { buscarCaixinha, convidar } from "@/lib/caixinha";
+import { buscarCaixinha, convidar, encerrarPrazo } from "@/lib/caixinha";
 import type { CaixinhaResponse } from "@/types/caixinha";
 
 /**
@@ -66,6 +66,28 @@ export default function CaixinhaDetalhePage({
       cancelado = true;
     };
   }, [carregar]);
+
+  // Story 4.5: encerrar prazo manualmente. Ação relevante — confirma antes.
+  async function handleEncerrarPrazo() {
+    if (
+      !window.confirm(
+        "Encerrar o prazo agora? A Caixinha vai formar (se tiver pagamentos" +
+          " suficientes) ou ser cancelada. Não dá para desfazer.",
+      )
+    ) {
+      return;
+    }
+    try {
+      await encerrarPrazo(parseInt(id, 10));
+      await carregar();
+    } catch (e) {
+      setMensagem(
+        e instanceof ApiError
+          ? (e.problem.detail ?? e.problem.title)
+          : "Não foi possível encerrar o prazo.",
+      );
+    }
+  }
 
   if (estado === "carregando") {
     return (
@@ -199,11 +221,44 @@ export default function CaixinhaDetalhePage({
         </Link>
       )}
 
+      {/* Story 4.2 (FR-12): só o Organizador apura, e só Caixinha formada. */}
+      {souDono && caixinha.estado === "formada" && (
+        <Link
+          href={`/caixinhas/${caixinha.id}/apuracao`}
+          className="flex min-h-[48px] items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white dark:bg-emerald-500"
+        >
+          Apurar o Resultado Final
+        </Link>
+      )}
+
+      {/* Story 4.4 (FR-14): Acerto de Contas visível a partir de apurada. */}
+      {(caixinha.estado === "apurada" ||
+        caixinha.estado === "repasse_parcial" ||
+        caixinha.estado === "repassada") && (
+        <Link
+          href={`/caixinhas/${caixinha.id}/acerto`}
+          className="flex min-h-[48px] items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          Ver Acerto de Contas
+        </Link>
+      )}
+
       {souDono && aceitaNovosConvites && (
         <ConvidarMais
           caixinhaId={caixinha.id}
           onConvidados={() => void carregar()}
         />
+      )}
+
+      {/* Story 4.5 (FR-15): encerrar prazo — só dono, antes da formação. */}
+      {souDono && aceitaNovosConvites && (
+        <button
+          type="button"
+          onClick={handleEncerrarPrazo}
+          className="min-h-[44px] rounded-md border border-zinc-400 px-4 text-xs font-medium text-zinc-600 dark:border-zinc-600 dark:text-zinc-400"
+        >
+          Encerrar prazo de entrada agora
+        </button>
       )}
     </main>
   );

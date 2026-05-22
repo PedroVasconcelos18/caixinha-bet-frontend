@@ -116,3 +116,63 @@ export interface CobrancaResponse {
   /** Estado da cobrança: ativa/invalidada/expirada/confirmada. */
   estado: string;
 }
+
+/** Corpo de POST /caixinhas/{id}/apuracao (Story 4.2, FR-12). */
+export interface ApurarCaixinhaRequest {
+  resultadoFinalId: number;
+  /**
+   * ids de Participante escolhidos como Ganhadores — usado SÓ quando há
+   * mais palpiteiros corretos que o Nº de Ganhadores. Omitir/vazio quando
+   * a seleção é automática.
+   */
+  ganhadoresEscolhidos?: number[];
+}
+
+/** Resposta de POST /caixinhas/{id}/apuracao (Story 4.2). */
+export interface ApuracaoResponse {
+  resultadoFinalId: number;
+  ganhadoresIds: number[];
+  /** true = 0 palpiteiros corretos; front exibe Acerto de Contas modo reembolso. */
+  modoReembolso: boolean;
+}
+
+/**
+ * Candidato a Ganhador — vem na extensão `candidatos` do problem+json
+ * 422 quando há mais palpiteiros corretos que o Nº de Ganhadores.
+ */
+export interface CandidatoGanhador {
+  participanteId: number;
+  email: string;
+}
+
+/** Um Ganhador no Acerto de Contas modo prêmio (Story 4.4). */
+export interface ItemGanhador {
+  email: string;
+  /** Money string decimal. */
+  valor: string;
+  /** aguardando_aceite | pix_em_andamento | pago | falha_pix. */
+  estadoRepasse: string;
+  /** Comprovante do PIX — null enquanto não pago. */
+  comprovante: string | null;
+}
+
+/** Um Participante reembolsado no Acerto de Contas modo reembolso (Story 4.4). */
+export interface ItemReembolso {
+  email: string;
+  /** Money string decimal — ingresso cheio (Taxa devolvida). */
+  valorEstorno: string;
+}
+
+/** Resposta de GET /caixinhas/{id}/acerto (Story 4.4, FR-14). */
+export interface AcertoContasResponse {
+  /** premio | reembolso | indisponivel. */
+  modo: string;
+  /** Estado da Caixinha (snake_case). */
+  estadoCaixinha: string;
+  /** Money string. */
+  taxaServico: string;
+  /** Money string. */
+  totalCustodiado: string;
+  ganhadores: ItemGanhador[];
+  reembolsos: ItemReembolso[];
+}

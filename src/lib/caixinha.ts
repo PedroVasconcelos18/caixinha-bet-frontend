@@ -10,12 +10,19 @@
  */
 import { apiFetch, readApiResponse } from "./api";
 import type {
+  AcertoContasResponse,
+  ApuracaoResponse,
+  ApurarCaixinhaRequest,
   CaixinhaResponse,
   ConviteResponse,
   CriarCaixinhaRequest,
   EnviarConvitesResponse,
   ParticipanteResponse,
 } from "@/types/caixinha";
+
+/** Type RFC 9457 do back — 422 de apuração inválida. */
+export const TYPE_APURACAO_INVALIDA =
+  "https://caixinha.bet/problems/apuracao-invalida";
 
 export async function criarCaixinha(
   req: CriarCaixinhaRequest,
@@ -124,6 +131,109 @@ export async function definirPalpite(
   if (!body) {
     throw new Error(
       "PUT /caixinhas/:id/palpite devolveu corpo vazio (esperado 200)",
+    );
+  }
+  return body;
+}
+
+/**
+ * Apura a Caixinha (Story 4.2, FR-12).
+ *
+ * `POST /caixinhas/{id}/apuracao`. 200 com `ApuracaoResponse`.
+ *
+ * Erros:
+ *  - 403 não-Organizador; 404 não-Participante.
+ *  - 422 `.../problems/apuracao-invalida` — estado errado, já apurada,
+ *    Resultado Final inválido, OU mais palpiteiros corretos que o Nº de
+ *    Ganhadores. Neste último caso o problem+json traz a extensão
+ *    `candidatos: CandidatoGanhador[]` para o front montar a seleção.
+ */
+export async function apurarCaixinha(
+  caixinhaId: number,
+  req: ApurarCaixinhaRequest,
+): Promise<ApuracaoResponse> {
+  const resp = await apiFetch(`/caixinhas/${caixinhaId}/apuracao`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  const body = await readApiResponse<ApuracaoResponse>(resp);
+  if (!body) {
+    throw new Error(
+      "POST /caixinhas/:id/apuracao devolveu corpo vazio (esperado 200)",
+    );
+  }
+  return body;
+}
+
+/**
+ * O Ganhador aceita o prêmio — dispara o PIX (Story 4.6, FR-13).
+ *
+ * `POST /caixinhas/{id}/aceitar-premio`. 200 com `{ estadoPayout,
+ * comprovante }`. Idempotente — chamar 2x não duplica o PIX.
+ *
+ * Erros: 422 chave-pix-obrigatoria (sem chave), 422 pagamento-indisponivel
+ * (não é Ganhador).
+ */
+export async function aceitarPremio(
+  caixinhaId: number,
+): Promise<{ estadoPayout: string; comprovante: string | null }> {
+  const resp = await apiFetch(`/caixinhas/${caixinhaId}/aceitar-premio`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const body = await readApiResponse<{
+    estadoPayout: string;
+    comprovante: string | null;
+  }>(resp);
+  if (!body) {
+    throw new Error(
+      "POST /caixinhas/:id/aceitar-premio devolveu corpo vazio (esperado 200)",
+    );
+  }
+  return body;
+}
+
+/**
+ * Encerra manualmente o prazo de entrada (Story 4.5, FR-15).
+ *
+ * `POST /caixinhas/{id}/encerrar-prazo`. 200 com `{ estadoResultante,
+ * reembolsoPendente }`. 403 não-Organizador; 422 estado terminal.
+ */
+export async function encerrarPrazo(
+  caixinhaId: number,
+): Promise<{ estadoResultante: string; reembolsoPendente: boolean }> {
+  const resp = await apiFetch(`/caixinhas/${caixinhaId}/encerrar-prazo`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const body = await readApiResponse<{
+    estadoResultante: string;
+    reembolsoPendente: boolean;
+  }>(resp);
+  if (!body) {
+    throw new Error(
+      "POST /caixinhas/:id/encerrar-prazo devolveu corpo vazio (esperado 200)",
+    );
+  }
+  return body;
+}
+
+/**
+ * Busca o Acerto de Contas — o desfecho da Caixinha (Story 4.4, FR-14).
+ *
+ * `GET /caixinhas/{id}/acerto`. 200 com `AcertoContasResponse`
+ * (`modo`: premio / reembolso / indisponivel). 404 se não-Participante.
+ */
+export async function buscarAcertoContas(
+  caixinhaId: number,
+): Promise<AcertoContasResponse> {
+  const resp = await apiFetch(`/caixinhas/${caixinhaId}/acerto`, {
+    method: "GET",
+  });
+  const body = await readApiResponse<AcertoContasResponse>(resp);
+  if (!body) {
+    throw new Error(
+      "GET /caixinhas/:id/acerto devolveu corpo vazio (esperado 200)",
     );
   }
   return body;
