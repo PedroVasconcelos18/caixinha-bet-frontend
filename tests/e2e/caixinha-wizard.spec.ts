@@ -34,7 +34,7 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 		);
 		expect(horizontalOverflow).toBe(false);
 
-		const proximo = page.getByRole("button", { name: /^Próximo$/i });
+		const proximo = page.getByRole("button", { name: /^Continuar$/i });
 		await expect(proximo).toBeVisible();
 		const box = await proximo.boundingBox();
 		expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -53,24 +53,24 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 		await page.goto("/caixinhas/nova");
 
 		// Etapa 1: Confronto
-		await page.getByLabel("Título").fill("Brasil x Marrocos");
-		await page.getByLabel("Lado A").fill("Brasil");
-		await page.getByLabel("Lado B").fill("Marrocos");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Nome / título da caixinha").fill("Brasil x Marrocos");
+		await page.getByLabel("Time mandante").fill("Brasil");
+		await page.getByLabel("Time visitante").fill("Marrocos");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		// Etapa 2: Resultados — preencher dois
 		await page.getByLabel("Resultado 1").fill("Vitória A");
 		await page.getByLabel("Resultado 2").fill("Vitória B");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		// Etapa 3: Financeiro — valor inválido
-		await page.getByLabel("Valor de ingresso (R$)").fill("4");
-		await page.getByLabel("Mínimo de Participantes").fill("5");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Valor de ingresso").fill("4");
+		await page.getByLabel("Mínimo de participantes").fill("5");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		// Validação inline disparou. Escopar para `ul[role=alert]` porque
 		// o Next 16 também usa role=alert para o route announcer.
-		await expect(page.locator("ul[role=alert]")).toContainText(/R\$ 5,00/i);
+		await expect(page.locator("ul[role=alert]")).toContainText(/R\$.5,00/i);
 	});
 
 	test("v5: Nº de Ganhadores > Mínimo bloqueia avanço (FR-1 v5)", async ({
@@ -85,20 +85,20 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 		]);
 		await page.goto("/caixinhas/nova");
 
-		await page.getByLabel("Título").fill("Brasil x Marrocos");
-		await page.getByLabel("Lado A").fill("Brasil");
-		await page.getByLabel("Lado B").fill("Marrocos");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Nome / título da caixinha").fill("Brasil x Marrocos");
+		await page.getByLabel("Time mandante").fill("Brasil");
+		await page.getByLabel("Time visitante").fill("Marrocos");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		await page.getByLabel("Resultado 1").fill("Vitória A");
 		await page.getByLabel("Resultado 2").fill("Vitória B");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		// Etapa 3: Mínimo=2, Nº de Ganhadores=3 → inválido (3 > 2).
-		await page.getByLabel("Valor de ingresso (R$)").fill("40.00");
-		await page.getByLabel("Mínimo de Participantes").fill("2");
-		await page.getByRole("button", { name: "3" }).click();
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Valor de ingresso").fill("40.00");
+		await page.getByLabel("Mínimo de participantes").fill("2");
+		await page.getByRole("button", { name: /3 ganhadores/i }).click();
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		await expect(page.locator("ul[role=alert]")).toContainText(
 			/Nº de Ganhadores/i,
@@ -170,31 +170,29 @@ test.describe("/caixinhas/nova (Story 2.2)", () => {
 
 		await page.goto("/caixinhas/nova");
 
-		await page.getByLabel("Título").fill("Brasil x Marrocos");
-		await page.getByLabel("Lado A").fill("Brasil");
-		await page.getByLabel("Lado B").fill("Marrocos");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Nome / título da caixinha").fill("Brasil x Marrocos");
+		await page.getByLabel("Time mandante").fill("Brasil");
+		await page.getByLabel("Time visitante").fill("Marrocos");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		await page.getByLabel("Resultado 1").fill("Vitória A");
 		await page.getByLabel("Resultado 2").fill("Vitória B");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
-		await page.getByLabel("Valor de ingresso (R$)").fill("40.00");
-		await page.getByLabel("Mínimo de Participantes").fill("5");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Valor de ingresso").fill("40.00");
+		await page.getByLabel("Mínimo de participantes").fill("5");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
-		await page.getByLabel("Prazo de entrada").fill("2026-06-01T12:00");
-		await page.getByLabel("Data de apuração").fill("2026-06-01T14:00");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Data limite de entrada").fill("2026-06-01T12:00");
+		await page.getByLabel("Data de apuração do resultado").fill("2026-06-01T14:00");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
-		await page.getByRole("button", { name: /Próximo/ }).click(); // pular convidados
+		await page.getByRole("button", { name: /Continuar/ }).click(); // pular convidados
 
-		await expect(page.getByText(/Taxa de Serviço: R\$ 10\.00/i)).toBeVisible();
-		await expect(
-			page.getByText(/Estas regras ficam imutáveis após criar/i),
-		).toBeVisible();
+		await expect(page.getByText(/Taxa de serviço de/i)).toBeVisible();
+		await expect(page.getByText(/Regras desta caixinha/i)).toBeVisible();
 
-		await page.getByRole("button", { name: /Confirmar Caixinha/ }).click();
+		await page.getByRole("button", { name: /Criar caixinha/ }).click();
 
 		await page.waitForURL("**/caixinhas/42");
 		await expect(
@@ -267,13 +265,13 @@ test.describe("/caixinhas/nova → etapa 2 (Story 2.3)", () => {
 		await page.goto("/caixinhas/nova");
 
 		// Etapa 1: Confronto
-		await page.getByLabel("Título").fill("Brasil x Marrocos");
-		await page.getByLabel("Lado A").fill("Brasil");
-		await page.getByLabel("Lado B").fill("Marrocos");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Nome / título da caixinha").fill("Brasil x Marrocos");
+		await page.getByLabel("Time mandante").fill("Brasil");
+		await page.getByLabel("Time visitante").fill("Marrocos");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		// Etapa 2: deve mostrar o botão
-		const sugerir = page.getByRole("button", { name: /Sugerir automaticamente/i });
+		const sugerir = page.getByRole("button", { name: /Sugerir automático/i });
 		await expect(sugerir).toBeVisible();
 		const box = await sugerir.boundingBox();
 		expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -303,21 +301,21 @@ test.describe("/caixinhas/nova → etapa 2 (Story 2.3)", () => {
 		]);
 		await page.goto("/caixinhas/nova");
 
-		await page.getByLabel("Título").fill("Brasil x Marrocos");
-		await page.getByLabel("Lado A").fill("Brasil");
-		await page.getByLabel("Lado B").fill("Marrocos");
-		await page.getByRole("button", { name: /Próximo/ }).click();
+		await page.getByLabel("Nome / título da caixinha").fill("Brasil x Marrocos");
+		await page.getByLabel("Time mandante").fill("Brasil");
+		await page.getByLabel("Time visitante").fill("Marrocos");
+		await page.getByRole("button", { name: /Continuar/ }).click();
 
 		await page.getByLabel("Resultado 1").fill("Meu rótulo custom");
 
 		// Registra handler ANTES do clique (Playwright recomenda) — cancelar
 		page.once("dialog", (d) => d.dismiss());
-		await page.getByRole("button", { name: /Sugerir automaticamente/i }).click();
+		await page.getByRole("button", { name: /Sugerir automático/i }).click();
 		await expect(page.getByLabel("Resultado 1")).toHaveValue("Meu rótulo custom");
 
 		// Agora aceitar
 		page.once("dialog", (d) => d.accept());
-		await page.getByRole("button", { name: /Sugerir automaticamente/i }).click();
+		await page.getByRole("button", { name: /Sugerir automático/i }).click();
 		await expect(page.getByLabel("Resultado 1")).toHaveValue(
 			"Vitória de Brasil",
 		);
@@ -403,11 +401,14 @@ test.describe("/caixinhas/[id] → Convidar mais (Story 2.4)", () => {
 
 		await page.goto("/caixinhas/42");
 
-		await expect(page.getByRole("heading", { name: /Convidar mais/i })).toBeVisible();
+		// O campo de convite (placeholder) só aparece para o dono.
+		const campoConvite = page.getByPlaceholder("Convidar mais alguém por e-mail");
+		await expect(campoConvite).toBeVisible();
 
-		await page.getByPlaceholder("amigo@exemplo.com").fill("alice@local");
-		await page.getByRole("button", { name: /^Convidar$/i }).click();
+		await campoConvite.fill("alice@local");
+		await page.getByRole("button", { name: /Convidar/i }).click();
 
+		// Feedback via toast global.
 		await expect(page.getByText(/1 convidado/i)).toBeVisible();
 		expect(callCount).toBeGreaterThanOrEqual(2); // recarregou após convidar
 	});
@@ -435,9 +436,11 @@ test.describe("/caixinhas/[id] → Convidar mais (Story 2.4)", () => {
 			}),
 		);
 		await page.goto("/caixinhas/42");
-		// Heading existe (Caixinha), mas a seção de convidar não
-		await expect(page.getByRole("heading", { name: "Brasil x Marrocos" })).toBeVisible();
-		await expect(page.getByRole("heading", { name: /Convidar mais/i })).toHaveCount(0);
+		// O título da caixinha aparece, mas o campo de convidar (só do dono) não.
+		await expect(page.getByText("Brasil x Marrocos")).toBeVisible();
+		await expect(
+			page.getByPlaceholder("Convidar mais alguém por e-mail"),
+		).toHaveCount(0);
 	});
 });
 

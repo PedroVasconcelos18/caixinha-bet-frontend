@@ -1,34 +1,117 @@
 @import "tailwindcss";
 
+/* =========================================================================
+   CAIXINHA BET — Design System (Story 7.1, Épico 7)
+   Tokens derivados da linguagem visual do design aprovado
+   docs/design/remixed-7b210df2.tsx. Recriados de forma idiomática —
+   nenhuma linha de código do protótipo é portada (AGENTS.md regra 4):
+   o protótipo informa a ESTÉTICA, não a implementação.
+   Tema escuro por padrão — não há mais esquema light/dark neutro.
+   ========================================================================= */
+
+@theme {
+  /* superfícies / fundo */
+  --color-bg: #070b14;
+  --color-bg2: #0c1322;
+  --color-surface: #111a2b;
+  --color-card: #101829;
+  --color-line: #22304a;
+  --color-line2: #2c3a55;
+
+  /* texto */
+  --color-text: #eaf0fa;
+  --color-muted: #7e8ca6;
+
+  /* acentos */
+  --color-green: #1fe074;
+  --color-green-d: #0fb85c;
+  --color-gold: #f5c518;
+  --color-amber: #f5a623;
+  --color-red: #ff5468;
+  --color-blue: #7cc4ff;
+
+  /* fontes — variáveis injetadas por next/font (ver layout.tsx) */
+  --font-display: var(--font-anton);
+  --font-sans: var(--font-sora);
+}
+
+/* Estados da Caixinha — cor + glow por estado. Em CSS puro (fora de @theme)
+   porque os glows são rgba derivada usada em backgrounds translúcidos.
+   Os estados do backend repasse_parcial/repassada reaproveitam o visual de
+   `apurada` (decisão do Épico 7: repasse é etapa pós-apuração, não 5º nó). */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --status-coletando_convites: var(--color-amber);
+  --status-coletando_convites-glow: rgba(245, 166, 35, 0.18);
+  --status-coletando_pagamentos: var(--color-gold);
+  --status-coletando_pagamentos-glow: rgba(245, 197, 24, 0.18);
+  --status-formada: var(--color-green);
+  --status-formada-glow: rgba(31, 224, 116, 0.18);
+  --status-apurada: var(--color-blue);
+  --status-apurada-glow: rgba(124, 196, 255, 0.18);
+  --status-cancelada: var(--color-red);
+  --status-cancelada-glow: rgba(255, 84, 104, 0.18);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-bg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(31, 224, 116, 0.1), transparent 60%),
+    radial-gradient(800px 500px at 5% 0%, rgba(245, 197, 24, 0.07), transparent 55%),
+    var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans), -apple-system, system-ui, sans-serif;
   /*
     Mobile-first load-bearing (NFR-3): a fundação NUNCA pode causar scroll
-    horizontal em 360×640. Componentes mal-comportados nos épicos seguintes
-    serão "engolidos" aqui em vez de quebrar o layout. Se algum componente
-    precisar legitimamente de scroll horizontal, ele aplica overflow no
-    próprio container, NUNCA no <body>.
+    horizontal em 360×640. Se um componente precisar legitimamente de scroll
+    horizontal, ele aplica overflow no próprio container, NUNCA no <body>.
   */
   overflow-x: hidden;
+}
+
+/* Grid decorativo de fundo — puramente cosmético, pointer-events:none,
+   mascarado para não vazar nas bordas. Não afeta layout nem causa scroll. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(circle at 50% 0%, #000, transparent 75%);
+  mask-image: radial-gradient(circle at 50% 0%, #000, transparent 75%);
+}
+
+/* o conteúdo da app fica acima do grid decorativo */
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* animação de entrada reutilizável (classe utilitária .cx-fade) */
+@keyframes cx-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cx-fade {
+  animation: cx-in 0.45s ease both;
+}
+
+/* respeita usuários que pedem menos movimento */
+@media (prefers-reduced-motion: reduce) {
+  .cx-fade {
+    animation: none;
+  }
 }

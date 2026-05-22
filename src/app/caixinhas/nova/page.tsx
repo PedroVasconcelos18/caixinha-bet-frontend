@@ -2,22 +2,37 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  CheckCircle2,
+  ChevronRight,
+  ArrowLeft,
+  Plus,
+  X,
+  Sparkles,
+  ShieldCheck,
+  AlertTriangle,
+  Lock,
+  Trophy,
+  Mail,
+} from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { criarCaixinha, sugerirResultados } from "@/lib/caixinha";
-import { Decimal, moneyFromApi, moneyToApi } from "@/lib/money";
+import { Decimal, moneyFromApi, moneyToApi, formatBRL } from "@/lib/money";
+import { bandeiraDe } from "@/lib/ui";
+import { useToast } from "@/components/Toasts";
+import { Botao, Card, Callout, Campo, Input, Chip, VoltarLink, cx } from "@/components/ui";
 
 /**
- * Wizard de criação de Caixinha (Story 2.2).
+ * Wizard de criação de Caixinha (Story 2.2 / FR-1, FR-3 — redesenhado na
+ * Story 7.4 do Épico 7 para o design aprovado: stepper de 6 passos,
+ * card-painel e callouts.
  *
- * 6 etapas client-side (sem persistência intermediária — abandonar = perde,
- * mesma UX de carrinho de compra sem login). Submit no final = único
- * POST /caixinhas atômico.
+ * A LÓGICA é preservada da implementação anterior (validação inline,
+ * aritmética via Decimal/NFR-1, `criarCaixinha`, `SugerirBotao`). Só a
+ * apresentação muda. Submit no final = único POST /caixinhas atômico.
  *
- * Validação inline para feedback rápido; back valida tudo de novo (422
- * com `violations` se algo passar).
- *
- * Mobile-first 360×640: inputs ≥44px, sem scroll horizontal, tom NFR-6
- * caloroso ("organize seu bolão, sem planilha", etc.).
+ * Mobile-first 360×640: inputs ≥44px, stepper que encolhe sem scroll
+ * horizontal (NFR-3).
  */
 type Etapa = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -27,12 +42,13 @@ interface Dados {
   ladoB: string;
   valorIngresso: string;
   minimoParticipantes: string;
-  /** v5 FR-1: "1" | "2" | "3" (mantido como string para casar com inputs). */
+  /** v5 FR-1: "1" | "2" | "3" (string para casar com inputs). */
   numeroGanhadores: string;
   prazoEntrada: string; // input datetime-local (sem timezone)
   dataApuracao: string;
   rotulosResultados: string[];
-  emailsConvidados: string;
+  /** Lista de e-mails (gerenciada como chips, não textarea). */
+  emailsConvidados: string[];
 }
 
 const VAZIO: Dados = {
@@ -41,20 +57,24 @@ const VAZIO: Dados = {
   ladoB: "",
   valorIngresso: "",
   minimoParticipantes: "",
-  numeroGanhadores: "1", // default; usuário pode trocar p/ 2 ou 3 na etapa 3
+  numeroGanhadores: "1",
   prazoEntrada: "",
   dataApuracao: "",
   rotulosResultados: ["", ""],
-  emailsConvidados: "",
+  emailsConvidados: [],
 };
 
-const TAXA_SERVICO_REAIS = "10.00";
-const INGRESSO_MIN_REAIS = "5.00";
+const TAXA_SERVICO = "10.00";
+const INGRESSO_MIN = "5.00";
+const PASSOS = ["Confronto", "Resultados", "Financeiro", "Prazos", "Convidados", "Revisão"];
+const RE_EMAIL = /\S+@\S+\.\S+/;
 
 export default function NovaCaixinhaPage() {
   const router = useRouter();
+  const { notificar } = useToast();
   const [etapa, setEtapa] = useState<Etapa>(1);
   const [d, setD] = useState<Dados>(VAZIO);
+  const [emailIn, setEmailIn] = useState("");
   const [submetendo, setSubmetendo] = useState(false);
   const [erros, setErros] = useState<string[]>([]);
 
@@ -70,25 +90,20 @@ export default function NovaCaixinhaPage() {
         e.push("Pelo menos 2 Resultados Possíveis com rótulo não-vazio.");
       }
     } else if (etapa === 3) {
-      // Dinheiro: comparação via Decimal (NUNCA via parseFloat — NFR-1/AR-8).
-      // Try/catch porque moneyFromApi lança em string inválida.
+      // Dinheiro: comparação via Decimal (NUNCA parseFloat — NFR-1/AR-8).
       let valorOk = false;
       try {
         if (d.valorIngresso.trim().length > 0) {
-          const v = moneyFromApi(d.valorIngresso);
-          valorOk = v.gte(new Decimal("5.00"));
+          valorOk = moneyFromApi(d.valorIngresso).gte(new Decimal(INGRESSO_MIN));
         }
       } catch {
         valorOk = false;
       }
-      if (!valorOk) {
-        e.push("Valor de ingresso deve ser pelo menos R$ 5,00.");
-      }
+      if (!valorOk) e.push(`Valor de ingresso deve ser pelo menos ${formatBRL(INGRESSO_MIN)}.`);
       const m = parseInt(d.minimoParticipantes, 10);
       if (!d.minimoParticipantes || isNaN(m) || m < 2) {
-        e.push("Mínimo de Participantes deve ser >= 2.");
+        e.push("Mínimo de Participantes deve ser ≥ 2.");
       }
-      // v5 FR-1: Nº de Ganhadores (1, 2 ou 3) e ≤ Mínimo de Participantes.
       const g = parseInt(d.numeroGanhadores, 10);
       if (!d.numeroGanhadores || isNaN(g) || g < 1 || g > 3) {
         e.push("Nº de Ganhadores deve ser 1, 2 ou 3.");
@@ -124,20 +139,24 @@ export default function NovaCaixinhaPage() {
     setEtapa((etapa - 1) as Etapa);
   }
 
+  function adicionarEmail() {
+    const v = emailIn.trim();
+    if (!RE_EMAIL.test(v)) return;
+    if (!d.emailsConvidados.includes(v)) {
+      setD({ ...d, emailsConvidados: [...d.emailsConvidados, v] });
+    }
+    setEmailIn("");
+  }
+
   async function confirmar() {
     setSubmetendo(true);
     setErros([]);
     try {
-      const emails = d.emailsConvidados
-        .split(/[\n,;]/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
       const created = await criarCaixinha({
         titulo: d.titulo.trim(),
         ladoA: d.ladoA.trim(),
         ladoB: d.ladoB.trim(),
-        // moneyToApi(moneyFromApi(...)) normaliza para 2 casas decimais sem
-        // passar por Number (NFR-1/AR-8). Já validamos na etapa 3.
+        // moneyToApi(moneyFromApi(...)) normaliza p/ 2 casas sem Number (NFR-1).
         valorIngresso: moneyToApi(moneyFromApi(d.valorIngresso)),
         minimoParticipantes: parseInt(d.minimoParticipantes, 10),
         numeroGanhadores: parseInt(d.numeroGanhadores, 10),
@@ -146,8 +165,9 @@ export default function NovaCaixinhaPage() {
         rotulosResultados: d.rotulosResultados
           .map((r) => r.trim())
           .filter((r) => r.length > 0),
-        emailsConvidados: emails,
+        emailsConvidados: d.emailsConvidados,
       });
+      notificar(`Caixinha "${created.titulo}" criada com sucesso!`, "win");
       router.push(`/caixinhas/${created.id}`);
     } catch (e) {
       setSubmetendo(false);
@@ -165,291 +185,343 @@ export default function NovaCaixinhaPage() {
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
-          Etapa {etapa} de 6
-        </p>
-        <h1 className="text-xl font-semibold tracking-tight">
-          {etapa === 1 && "Confronto"}
-          {etapa === 2 && "Resultados Possíveis"}
-          {etapa === 3 && "Financeiro"}
-          {etapa === 4 && "Prazos"}
-          {etapa === 5 && "Convidados"}
-          {etapa === 6 && "Revisão"}
-        </h1>
-      </header>
+    <main className="cx-fade mx-auto max-w-[760px]">
+      <VoltarLink href="/">Cancelar</VoltarLink>
+
+      <h1 className="mb-5 mt-1 font-display text-[28px] tracking-wide">
+        Nova caixinha <span className="text-base font-medium text-muted">— resultado único</span>
+      </h1>
+
+      {/* ------- stepper ------- */}
+      <ol className="mb-5 flex flex-wrap gap-2">
+        {PASSOS.map((p, i) => {
+          const n = (i + 1) as Etapa;
+          const atual = n === etapa;
+          const feito = n < etapa;
+          return (
+            <li
+              key={p}
+              className={cx(
+                "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12.5px]",
+                atual && "border-green bg-green/10 text-green",
+                feito && "border-line bg-surface text-text",
+                !atual && !feito && "border-line bg-surface text-muted",
+              )}
+            >
+              <span
+                className={cx(
+                  "grid h-[19px] w-[19px] place-items-center rounded-full text-[11px] font-bold",
+                  atual ? "bg-green text-[#04210f]" : "bg-line text-text",
+                )}
+              >
+                {feito ? <CheckCircle2 size={14} /> : n}
+              </span>
+              {p}
+            </li>
+          );
+        })}
+      </ol>
 
       {erros.length > 0 && (
-        <ul
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-300"
-        >
-          {erros.map((e, i) => (
-            <li key={i}>• {e}</li>
-          ))}
-        </ul>
+        <div className="mb-4">
+          <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+            <ul role="alert" className="space-y-0.5">
+              {erros.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          </Callout>
+        </div>
       )}
 
-      <section className="flex flex-1 flex-col gap-3">
+      {/* ------- card-painel do passo ------- */}
+      <Card className="p-6">
         {etapa === 1 && (
-          <>
-            <Field label="Título">
-              <input
-                type="text"
+          <div className="flex flex-col gap-4">
+            <Campo label="Nome / título da caixinha" hint="Ex: Jogo Brasil vs Marrocos">
+              <Input
                 value={d.titulo}
-                onChange={(ev) => setD({ ...d, titulo: ev.target.value })}
-                placeholder="Brasil x Marrocos"
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
+                onChange={(e) => setD({ ...d, titulo: e.target.value })}
+                placeholder="Dê um nome para o bolão"
               />
-            </Field>
-            <Field label="Lado A">
-              <input
-                type="text"
-                value={d.ladoA}
-                onChange={(ev) => setD({ ...d, ladoA: ev.target.value })}
-                placeholder="Brasil"
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-            <Field label="Lado B">
-              <input
-                type="text"
-                value={d.ladoB}
-                onChange={(ev) => setD({ ...d, ladoB: ev.target.value })}
-                placeholder="Marrocos"
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-          </>
+            </Campo>
+            <div className="flex items-end gap-3">
+              <Campo label="Time mandante">
+                <Input
+                  value={d.ladoA}
+                  onChange={(e) => setD({ ...d, ladoA: e.target.value })}
+                  placeholder="Ex: Brasil"
+                />
+              </Campo>
+              <span className="hidden shrink-0 pb-3 font-display text-sm text-muted sm:block">
+                {bandeiraDe(d.ladoA)} VS {bandeiraDe(d.ladoB)}
+              </span>
+              <Campo label="Time visitante">
+                <Input
+                  value={d.ladoB}
+                  onChange={(e) => setD({ ...d, ladoB: e.target.value })}
+                  placeholder="Ex: Marrocos"
+                />
+              </Campo>
+            </div>
+          </div>
         )}
 
         {etapa === 2 && (
-          <>
-            <p className="text-sm text-zinc-600">
-              Pelo menos 2 rótulos não-vazios.
+          <div className="flex flex-col gap-3">
+            <p className="text-[13px] text-muted">
+              Mínimo de 2 opções. Os participantes escolherão uma delas como palpite.
             </p>
-            <SugerirBotao
-              ladoA={d.ladoA}
-              ladoB={d.ladoB}
-              rotulosAtuais={d.rotulosResultados}
-              aoSugerir={(novos) =>
-                setD({ ...d, rotulosResultados: novos })
-              }
-            />
             {d.rotulosResultados.map((r, i) => (
-              <Field key={i} label={`Resultado ${i + 1}`}>
-                <input
-                  type="text"
+              <div key={i} className="flex items-center gap-2.5">
+                <span className="grid h-[44px] w-[30px] shrink-0 place-items-center rounded-lg bg-green/15 font-display text-green">
+                  {i + 1}
+                </span>
+                <Input
+                  aria-label={`Resultado ${i + 1}`}
                   value={r}
-                  onChange={(ev) => {
+                  onChange={(e) => {
                     const novo = [...d.rotulosResultados];
-                    novo[i] = ev.target.value;
+                    novo[i] = e.target.value;
                     setD({ ...d, rotulosResultados: novo });
                   }}
-                  className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
+                  placeholder={`Resultado ${i + 1}`}
                 />
-              </Field>
+                {d.rotulosResultados.length > 2 && (
+                  <button
+                    type="button"
+                    aria-label={`Remover a opção ${i + 1}`}
+                    onClick={() =>
+                      setD({
+                        ...d,
+                        rotulosResultados: d.rotulosResultados.filter((_, j) => j !== i),
+                      })
+                    }
+                    className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-lg border border-line2 text-muted hover:border-red hover:text-red"
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
             ))}
-            <div className="flex gap-2">
-              <button
-                type="button"
+            <div className="flex flex-wrap gap-2">
+              <Botao
+                variante="ghost"
                 onClick={() =>
-                  setD({
-                    ...d,
-                    rotulosResultados: [...d.rotulosResultados, ""],
-                  })
+                  setD({ ...d, rotulosResultados: [...d.rotulosResultados, ""] })
                 }
-                className="min-h-[44px] flex-1 rounded-md border border-zinc-300 px-3 text-sm"
               >
-                + Adicionar
-              </button>
-              {d.rotulosResultados.length > 2 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setD({
-                      ...d,
-                      rotulosResultados: d.rotulosResultados.slice(0, -1),
-                    })
-                  }
-                  className="min-h-[44px] flex-1 rounded-md border border-zinc-300 px-3 text-sm"
-                >
-                  − Remover
-                </button>
-              )}
+                <Plus size={15} /> Adicionar resultado
+              </Botao>
+              <SugerirBotao
+                ladoA={d.ladoA}
+                ladoB={d.ladoB}
+                rotulosAtuais={d.rotulosResultados}
+                aoSugerir={(novos) => setD({ ...d, rotulosResultados: novos })}
+              />
             </div>
-          </>
+          </div>
         )}
 
         {etapa === 3 && (
-          <>
-            <Field label="Valor de ingresso (R$)">
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min={INGRESSO_MIN_REAIS}
-                value={d.valorIngresso}
-                onChange={(ev) =>
-                  setD({ ...d, valorIngresso: ev.target.value })
-                }
-                placeholder="40.00"
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-            <p className="text-xs text-zinc-600">
-              Mínimo R$ {INGRESSO_MIN_REAIS}. Uma Taxa de Serviço de{" "}
-              R$ {TAXA_SERVICO_REAIS} é descontada do prêmio final.
-            </p>
-            <Field label="Mínimo de Participantes">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={2}
-                value={d.minimoParticipantes}
-                onChange={(ev) =>
-                  setD({ ...d, minimoParticipantes: ev.target.value })
-                }
-                placeholder="5"
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-            <p className="text-xs text-zinc-600">
-              Este número é simultaneamente o mínimo de <em>aceites</em>{" "}
-              (libera pagamento) e o mínimo de <em>pagantes</em> (forma a
-              Caixinha).
-            </p>
-            <Field label="Nº de Ganhadores">
-              <div className="flex gap-2">
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Campo label="Valor de ingresso" hint="Quanto cada participante paga via PIX">
+                <div className="flex min-h-[44px] items-center gap-2 rounded-xl border border-line2 bg-bg2 pl-3.5 focus-within:border-green">
+                  <span className="text-sm font-bold text-muted">R$</span>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min={INGRESSO_MIN}
+                    value={d.valorIngresso}
+                    onChange={(e) => setD({ ...d, valorIngresso: e.target.value })}
+                    placeholder="20,00"
+                    className="border-none bg-transparent pl-0 focus:ring-0"
+                  />
+                </div>
+              </Campo>
+              <Campo label="Mínimo de participantes" hint="Pagantes para a caixinha ser formada">
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={2}
+                  value={d.minimoParticipantes}
+                  onChange={(e) => setD({ ...d, minimoParticipantes: e.target.value })}
+                  placeholder="4"
+                />
+              </Campo>
+            </div>
+
+            {/* grupo de botões — NÃO usa <Campo> (que é <label>): um <label>
+                não deve envolver vários controles, e isso polui o nome
+                acessível de cada botão. */}
+            <div className="flex flex-col">
+              <span className="mb-2 text-[13px] font-semibold">Nº de ganhadores</span>
+              <div className="flex gap-2" role="group" aria-label="Nº de ganhadores">
                 {[1, 2, 3].map((n) => (
                   <button
                     key={n}
                     type="button"
-                    onClick={() =>
-                      setD({ ...d, numeroGanhadores: String(n) })
-                    }
+                    aria-label={`${n} ganhador${n > 1 ? "es" : ""}`}
                     aria-pressed={d.numeroGanhadores === String(n)}
-                    className={
-                      "min-h-[44px] flex-1 rounded-md border px-4 text-sm font-medium " +
-                      (d.numeroGanhadores === String(n)
-                        ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                        : "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100")
-                    }
+                    onClick={() => setD({ ...d, numeroGanhadores: String(n) })}
+                    className={cx(
+                      "min-h-[44px] flex-1 rounded-xl border font-display text-lg",
+                      d.numeroGanhadores === String(n)
+                        ? "border-green bg-green/10 text-green"
+                        : "border-line2 bg-bg2 text-text",
+                    )}
                   >
                     {n}
                   </button>
                 ))}
               </div>
-            </Field>
-            <p className="text-xs text-zinc-600">
-              Entre quantos o Prêmio é rateado. Se houver mais palpiteiros
-              corretos que o Nº de Ganhadores na apuração, <em>você</em>{" "}
-              (Organizador) escolhe quem leva.
-            </p>
-          </>
+              <span className="mt-1.5 text-[11.5px] leading-snug text-muted">
+                Entre quantos o Prêmio é rateado (1, 2 ou 3). Se mais palpiteiros
+                acertarem, você escolhe quem leva.
+              </span>
+            </div>
+
+            <Callout tom="info" icone={<ShieldCheck size={18} />}>
+              <b>Taxa de serviço: {formatBRL(TAXA_SERVICO)} fixos</b> — descontados do
+              total da caixinha, independente do valor apostado ou do número de
+              convidados.
+              <CalcPotencial valorIngresso={d.valorIngresso} minimo={d.minimoParticipantes} />
+            </Callout>
+          </div>
         )}
 
         {etapa === 4 && (
-          <>
-            <Field label="Prazo de entrada">
-              <input
-                type="datetime-local"
-                value={d.prazoEntrada}
-                onChange={(ev) =>
-                  setD({ ...d, prazoEntrada: ev.target.value })
-                }
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-            <Field label="Data de apuração">
-              <input
-                type="datetime-local"
-                value={d.dataApuracao}
-                onChange={(ev) =>
-                  setD({ ...d, dataApuracao: ev.target.value })
-                }
-                className="min-h-[44px] rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
-            </Field>
-          </>
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Campo label="Data limite de entrada" hint="Último dia para aceitar e pagar">
+                <Input
+                  type="datetime-local"
+                  value={d.prazoEntrada}
+                  onChange={(e) => setD({ ...d, prazoEntrada: e.target.value })}
+                />
+              </Campo>
+              <Campo label="Data de apuração do resultado" hint="Quando o vencedor será definido">
+                <Input
+                  type="datetime-local"
+                  value={d.dataApuracao}
+                  onChange={(e) => setD({ ...d, dataApuracao: e.target.value })}
+                />
+              </Campo>
+            </div>
+            {d.prazoEntrada &&
+              d.dataApuracao &&
+              new Date(d.dataApuracao) <= new Date(d.prazoEntrada) && (
+                <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+                  A apuração deve ser posterior ao prazo de entrada.
+                </Callout>
+              )}
+            <Callout tom="neutral" icone={<Lock size={18} />}>
+              Após a criação, <b>valor, prazo de entrada, data de apuração e resultados
+              não poderão ser alterados</b>. Você ainda poderá convidar novas pessoas.
+            </Callout>
+          </div>
         )}
 
         {etapa === 5 && (
-          <>
-            <Field label="E-mails dos convidados (um por linha ou separados por vírgula)">
-              <textarea
-                rows={4}
-                value={d.emailsConvidados}
-                onChange={(ev) =>
-                  setD({ ...d, emailsConvidados: ev.target.value })
-                }
-                placeholder="amigo@exemplo.com&#10;outroamigo@exemplo.com"
-                className="rounded-md border border-zinc-300 bg-white p-3 text-base"
-              />
-            </Field>
-            <p className="text-xs text-zinc-600">
-              Opcional nesta etapa — você pode convidar depois (até o prazo
-              de entrada). Envio real chega na próxima atualização.
-            </p>
-          </>
+          <div className="flex flex-col gap-4">
+            <Campo
+              label="Convidar por e-mail"
+              hint="Opcional aqui — dá para convidar depois (até o prazo). O código PIX só é enviado quando o mínimo de aceites é atingido."
+            >
+              <div className="flex gap-2">
+                <Input
+                  type="email"
+                  value={emailIn}
+                  onChange={(e) => setEmailIn(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      adicionarEmail();
+                    }
+                  }}
+                  placeholder="amigo@email.com"
+                />
+                <Botao variante="primary" onClick={adicionarEmail} aria-label="Adicionar convidado">
+                  <Plus size={15} />
+                </Botao>
+              </div>
+            </Campo>
+            <div className="flex flex-wrap gap-2">
+              <Chip dono>
+                <Trophy size={13} /> você (organizador)
+              </Chip>
+              {d.emailsConvidados.map((e) => (
+                <Chip
+                  key={e}
+                  onRemover={() =>
+                    setD({
+                      ...d,
+                      emailsConvidados: d.emailsConvidados.filter((x) => x !== e),
+                    })
+                  }
+                >
+                  <Mail size={12} /> {e}
+                </Chip>
+              ))}
+            </div>
+          </div>
         )}
 
-        {etapa === 6 && (
-          <Revisao d={d} />
-        )}
-      </section>
+        {etapa === 6 && <Revisao d={d} />}
+      </Card>
 
-      <footer className="flex gap-2">
+      {/* ------- navegação ------- */}
+      <div className="mt-5 flex items-center gap-3">
         {etapa > 1 && (
-          <button
-            type="button"
-            onClick={anterior}
-            disabled={submetendo}
-            className="min-h-[48px] flex-1 rounded-md border border-zinc-300 px-4 text-sm"
-          >
-            Voltar
-          </button>
+          <Botao variante="ghost" onClick={anterior} disabled={submetendo}>
+            <ArrowLeft size={15} /> Voltar
+          </Botao>
         )}
-        {etapa < 6 && (
-          <button
-            type="button"
-            onClick={proxima}
-            className="min-h-[48px] flex-1 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            Próximo
-          </button>
+        <div className="flex-1" />
+        {etapa < 6 ? (
+          <Botao variante="primary" onClick={proxima}>
+            Continuar <ChevronRight size={16} />
+          </Botao>
+        ) : (
+          <Botao variante="primary" grande onClick={confirmar} disabled={submetendo}>
+            <Trophy size={17} /> {submetendo ? "Criando…" : "Criar caixinha"}
+          </Botao>
         )}
-        {etapa === 6 && (
-          <button
-            type="button"
-            onClick={confirmar}
-            disabled={submetendo}
-            className="min-h-[48px] flex-1 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            {submetendo ? "Criando..." : "Confirmar Caixinha"}
-          </button>
-        )}
-      </footer>
+      </div>
     </main>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+/* ----------------------------------------------------------------------- */
+/* CalcPotencial — prêmio potencial no mínimo (Decimal, NFR-1).            */
+/* ----------------------------------------------------------------------- */
+function CalcPotencial({ valorIngresso, minimo }: { valorIngresso: string; minimo: string }) {
+  let v: Decimal;
+  try {
+    v = valorIngresso ? moneyFromApi(valorIngresso) : new Decimal(0);
+  } catch {
+    v = new Decimal(0);
+  }
+  const m = parseInt(minimo || "0", 10) || 0;
+  const bruto = v.times(m).minus(new Decimal(TAXA_SERVICO));
+  const potencial = bruto.isPositive() ? bruto : new Decimal(0);
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-sm font-medium">{label}</span>
-      {children}
-    </label>
+    <div className="mt-2 text-[13px]">
+      Prêmio potencial no mínimo:{" "}
+      <b className="font-display text-base text-gold">{formatBRL(potencial)}</b>
+      <span className="text-muted">
+        {" "}
+        ({m} × {formatBRL(v)} − {formatBRL(TAXA_SERVICO)})
+      </span>
+    </div>
   );
 }
 
+/* ----------------------------------------------------------------------- */
+/* Revisao — passo 6.                                                      */
+/* ----------------------------------------------------------------------- */
 function Revisao({ d }: { d: Dados }) {
   // Aritmética monetária via Decimal — regra dura NFR-1/AR-8.
   let v: Decimal;
@@ -460,92 +532,91 @@ function Revisao({ d }: { d: Dados }) {
   }
   const m = parseInt(d.minimoParticipantes || "0", 10);
   const g = parseInt(d.numeroGanhadores || "1", 10) || 1;
-  const taxa = new Decimal("10");
-  const potencialBruto = v.times(m).minus(taxa);
-  const premioMax = (potencialBruto.isPositive() ? potencialBruto : new Decimal(0)).toFixed(2);
-  // Decimal.div arredonda; usamos as 2 casas finais.
-  const porGanhador = (potencialBruto.isPositive() ? potencialBruto.div(g) : new Decimal(0)).toFixed(2);
+  const bruto = v.times(m).minus(new Decimal(TAXA_SERVICO));
+  const premioMax = bruto.isPositive() ? bruto : new Decimal(0);
+  const porGanhador = bruto.isPositive() ? bruto.div(g) : new Decimal(0);
+  const resultados = d.rotulosResultados.map((r) => r.trim()).filter((r) => r.length > 0);
+
   return (
-    <div className="flex flex-col gap-3 text-sm">
-      <Linha k="Título" v={d.titulo} />
-      <Linha k="Confronto" v={`${d.ladoA} × ${d.ladoB}`} />
-      <Linha
-        k="Resultados Possíveis"
-        v={d.rotulosResultados
-          .map((r) => r.trim())
-          .filter((r) => r.length > 0)
-          .join(", ")}
-      />
-      <Linha k="Valor do ingresso" v={`R$ ${v.toFixed(2)}`} />
-      <Linha
-        k="Mínimo único"
-        v={`${d.minimoParticipantes} (aceites E pagantes — mesmo número)`}
-      />
-      <Linha
-        k="Nº de Ganhadores"
-        v={`${g} (entre quantos o Prêmio é rateado)`}
-      />
-      <Linha
-        k="Prazo de entrada"
-        v={d.prazoEntrada || "(não informado)"}
-      />
-      <Linha
-        k="Data de apuração"
-        v={d.dataApuracao || "(não informado)"}
-      />
-      <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-        <p className="font-medium">Taxa de Serviço: R$ {TAXA_SERVICO_REAIS}</p>
-        <p className="mt-1">
-          Prêmio máximo (se todos pagarem) = Σ ingressos − Taxa = R$ {premioMax}
-        </p>
-        {g > 1 && (
-          <p className="mt-1">
-            Rateado entre {g} Ganhador(es) = R$ {porGanhador} por Ganhador
-            (resíduo de centavos vai ao 1º por ordem de pagamento).
-          </p>
-        )}
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-center gap-5">
+        <ConfrontoRevisao bandeira={bandeiraDe(d.ladoA)} nome={d.ladoA || "—"} />
+        <span className="font-display tracking-wide text-muted">VS</span>
+        <ConfrontoRevisao bandeira={bandeiraDe(d.ladoB)} nome={d.ladoB || "—"} />
       </div>
-      <div className="rounded-md border border-zinc-300 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950">
-        <p className="font-medium">Estas regras ficam imutáveis após criar:</p>
-        <ul className="mt-1 list-disc pl-5">
-          <li>Valor de ingresso</li>
-          <li>Prazo de entrada</li>
-          <li>Data de apuração</li>
-          <li>Resultados Possíveis</li>
-          <li>Nº de Ganhadores</li>
+      <div className="text-center font-display text-xl">{d.titulo || "—"}</div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <ItemRevisao k="Valor de ingresso" v={formatBRL(v)} />
+        <ItemRevisao k="Mínimo de pagantes" v={d.minimoParticipantes || "—"} />
+        <ItemRevisao k="Nº de ganhadores" v={String(g)} />
+        <ItemRevisao k="Prazo de entrada" v={d.prazoEntrada || "—"} />
+        <ItemRevisao k="Apuração" v={d.dataApuracao || "—"} />
+        <ItemRevisao k="Convidados" v={`${d.emailsConvidados.length + 1} pessoas`} />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {resultados.map((r, i) => (
+          <span
+            key={i}
+            className="rounded-full border border-line2 bg-surface px-3.5 py-2 text-[13px]"
+          >
+            <b className="mr-1.5 text-green">{i + 1}</b>
+            {r}
+          </span>
+        ))}
+      </div>
+
+      <Callout tom="neutral" icone={<ShieldCheck size={15} />}>
+        <div className="mb-1.5 font-bold text-text">Regras desta caixinha</div>
+        <ul className="list-disc space-y-0.5 pl-4">
+          <li>Todo o dinheiro acumulado é transferido via PIX para quem acertar o resultado.</li>
+          <li>
+            Havendo mais de um vencedor, o prêmio é <b className="text-text">dividido igualmente</b>.
+          </li>
+          <li>
+            Taxa de serviço de <b className="text-text">{formatBRL(TAXA_SERVICO)}</b> descontada do
+            total. Prêmio máximo: <b className="text-text">{formatBRL(premioMax)}</b>
+            {g > 1 && <> · {formatBRL(porGanhador)} por ganhador</>}.
+          </li>
+          <li>O código PIX só é enviado quando o mínimo de aceites é atingido.</li>
+          <li>Sem o mínimo de pagantes até o prazo, a caixinha é cancelada e os valores devolvidos.</li>
+          <li>
+            Valor, prazos, apuração e resultados <b className="text-text">não podem ser alterados</b>{" "}
+            após a criação.
+          </li>
         </ul>
-        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Você ainda pode convidar mais Participantes depois (até o prazo).
-        </p>
-        {g < m && (
-          <p className="mt-2 text-xs text-zinc-700 dark:text-zinc-300">
-            <strong>Atenção:</strong> se na apuração houver mais palpiteiros
-            corretos que {g}, <em>você</em> (Organizador) seleciona quem são
-            os Ganhadores entre eles.
-          </p>
-        )}
-      </div>
+      </Callout>
     </div>
   );
 }
 
-function Linha({ k, v }: { k: string; v: string }) {
+function ConfrontoRevisao({ bandeira, nome }: { bandeira: string; nome: string }) {
   return (
-    <div className="flex flex-col">
-      <span className="text-xs uppercase tracking-wide text-zinc-500">{k}</span>
-      <span className="text-sm">{v}</span>
+    <span className="flex flex-col items-center gap-1.5 text-center text-sm font-bold">
+      <span className="text-3xl leading-none" aria-hidden>
+        {bandeira}
+      </span>
+      <span className="line-clamp-1">{nome}</span>
+    </span>
+  );
+}
+
+function ItemRevisao({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-bg2 p-3">
+      <span className="block text-[11px] text-muted">{k}</span>
+      <b className="text-sm">{v}</b>
     </div>
   );
 }
 
 /**
- * Botão "Sugerir automaticamente" (Story 2.3, FR-2).
+ * Botão "Sugerir automático" (Story 2.3, FR-2).
  *
- * Só aparece se `sugerirResultados(ladoA, ladoB)` retorna não-`null`
- * (AC-2: não-render em vez de `disabled` — não confunde o usuário).
- *
- * Se já há rótulo digitado, confirma antes de substituir (AC-3) via
- * `window.confirm` nativo — zero deps, acessível, bloqueia foco.
+ * Só aparece se `sugerirResultados(ladoA, ladoB)` retorna não-`null` (AC-2:
+ * não-render em vez de `disabled`). Se já há rótulo digitado, confirma antes
+ * de substituir (AC-3) via `window.confirm` nativo.
  */
 function SugerirBotao({
   ladoA,
@@ -559,14 +630,11 @@ function SugerirBotao({
   aoSugerir: (novos: string[]) => void;
 }) {
   const sugestao = sugerirResultados(ladoA, ladoB);
-  if (sugestao === null) {
-    return null;
-  }
-  const temAlgumRotuloUtil = rotulosAtuais.some(
-    (r) => r.trim().length > 0,
-  );
+  if (sugestao === null) return null;
+  const temRotulo = rotulosAtuais.some((r) => r.trim().length > 0);
+
   function handler() {
-    if (temAlgumRotuloUtil) {
+    if (temRotulo) {
       const ok = window.confirm(
         "Isso vai substituir os Resultados Possíveis atuais. Continuar?",
       );
@@ -574,20 +642,10 @@ function SugerirBotao({
     }
     aoSugerir(sugestao!);
   }
+
   return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={handler}
-        className="min-h-[44px] rounded-md border border-zinc-400 px-4 text-sm font-medium dark:border-zinc-600"
-      >
-        Sugerir automaticamente
-      </button>
-      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-        Com base no confronto, geramos &quot;Vitória de {ladoA.trim()}&quot;,
-        &quot;Empate&quot; e &quot;Vitória de {ladoB.trim()}&quot;. Você ainda
-        pode editar depois.
-      </p>
-    </div>
+    <Botao variante="ghost" onClick={handler}>
+      <Sparkles size={15} /> Sugerir automático
+    </Botao>
   );
 }

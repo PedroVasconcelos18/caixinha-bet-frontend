@@ -1,27 +1,22 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { Zap, ShieldCheck, Clock, CheckCircle2, Copy } from "lucide-react";
 import { ApiError } from "@/lib/api";
-import {
-  atualizarChavePix,
-  atualizarPerfilPagamento,
-  me,
-  type Sessao,
-} from "@/lib/auth";
+import { atualizarChavePix, atualizarPerfilPagamento, me, type Sessao } from "@/lib/auth";
 import { buscarCobranca, gerarCobranca } from "@/lib/pagamento";
+import { formatBRL } from "@/lib/money";
+import { useToast } from "@/components/Toasts";
+import { Botao, Card, Callout, Campo, Input, VoltarLink } from "@/components/ui";
 import type { CobrancaResponse } from "@/types/caixinha";
 
 /**
- * Tela de pagamento PIX (Story 3.2 v5, FR-7).
+ * Tela de pagamento PIX (Story 3.2 / FR-7 — redesenhada na Story 7.6 do
+ * Épico 7 para o design aprovado.
  *
- * Fluxo:
- *  - Carrega a sessão. Se o perfil de pagamento (nome+CPF+chave PIX) está
- *    incompleto, mostra o form de perfil ANTES de qualquer cobrança.
- *  - Com perfil completo: tenta carregar a cobrança ativa; se não há,
- *    oferece "gerar cobrança".
- *  - Exibe QR code + copia-e-cola + prazo + "aguardando confirmação".
- *  - SEM botão "já paguei" — Status só vira `pago` por webhook (FR-8).
+ * A LÓGICA é preservada: perfil de pagamento (nome+CPF+chave PIX) antes da
+ * cobrança; geração/consulta de cobrança; QR + copia-e-cola. SEM botão
+ * "já paguei" — o Status só vira `pago` por webhook (FR-8).
  *
  * Mobile-first 360×640 (NFR-3).
  */
@@ -32,6 +27,7 @@ export default function PagamentoPage({
 }) {
   const { id } = use(params);
   const caixinhaId = parseInt(id, 10);
+  const { notificar } = useToast();
 
   const [carregando, setCarregando] = useState(true);
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -40,7 +36,6 @@ export default function PagamentoPage({
   const [agindo, setAgindo] = useState(false);
   const [copiado, setCopiado] = useState(false);
 
-  // Form de perfil de pagamento.
   const [nomeForm, setNomeForm] = useState("");
   const [cpfForm, setCpfForm] = useState("");
   const [chavePixForm, setChavePixForm] = useState("");
@@ -52,7 +47,6 @@ export default function PagamentoPage({
       const s = await me();
       setSessao(s);
       if (s.perfilPagamentoCompleto) {
-        // Tenta carregar cobrança ativa; 404 = ainda não gerou (ok).
         try {
           setCobranca(await buscarCobranca(caixinhaId));
         } catch (e) {
@@ -89,10 +83,10 @@ export default function PagamentoPage({
     setAgindo(true);
     setErro(null);
     try {
-      // Dois endpoints (perfil = nome+CPF; chave PIX separada). Encadeados.
       await atualizarPerfilPagamento(nomeForm.trim(), cpfForm.trim());
       const s = await atualizarChavePix(chavePixForm.trim());
       setSessao(s);
+      notificar("Perfil de pagamento salvo!", "win");
     } catch (e) {
       setErro(
         e instanceof ApiError
@@ -109,6 +103,7 @@ export default function PagamentoPage({
     setErro(null);
     try {
       setCobranca(await gerarCobranca(caixinhaId));
+      notificar("Código PIX gerado.", "pix");
     } catch (e) {
       setErro(
         e instanceof ApiError
@@ -127,168 +122,130 @@ export default function PagamentoPage({
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2000);
     } catch {
-      // Clipboard pode falhar (permissão); o usuário ainda pode copiar manual.
+      // clipboard pode falhar (permissão) — usuário ainda copia manual
     }
   }
 
   if (carregando) {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando…</p>
       </main>
     );
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
-          Pagamento do ingresso
-        </p>
-        <h1 className="text-xl font-semibold tracking-tight">Pagar via PIX</h1>
-      </header>
+    <main className="cx-fade mx-auto flex max-w-[560px] flex-col gap-4">
+      <VoltarLink href={`/caixinhas/${caixinhaId}`}>Voltar para a caixinha</VoltarLink>
+
+      <div>
+        <p className="text-[11px] uppercase tracking-wider text-muted">Pagamento do ingresso</p>
+        <h1 className="font-display text-[26px] tracking-wide">Pagar via PIX</h1>
+      </div>
 
       {erro && (
-        <p
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-300"
-        >
-          {erro}
-        </p>
+        <Callout tom="warn">
+          <span role="alert">{erro}</span>
+        </Callout>
       )}
 
-      {/* Form de perfil de pagamento — só se incompleto. */}
+      {/* perfil de pagamento — só se incompleto */}
       {sessao && !sessao.perfilPagamentoCompleto && (
-        <section className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950">
-          <h2 className="text-sm font-medium text-amber-900 dark:text-amber-200">
-            Complete seu perfil para pagar
-          </h2>
-          <p className="text-xs text-amber-800 dark:text-amber-300">
-            O provedor de pagamento precisa do seu nome e CPF para registrar a
-            cobrança. A chave PIX é pra onde o prêmio vai, se você ganhar. Fica
-            tudo salvo pras próximas Caixinhas.
+        <Card className="flex flex-col gap-3 border-amber/30 p-6">
+          <div className="flex items-center gap-2 text-sm font-bold text-amber">
+            <ShieldCheck size={16} /> Complete seu perfil para pagar
+          </div>
+          <p className="text-xs leading-relaxed text-muted">
+            O provedor de pagamento precisa do seu nome e CPF para registrar a cobrança.
+            A chave PIX é para onde o prêmio vai, se você ganhar. Fica salvo para as
+            próximas caixinhas.
           </p>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium">Nome completo</span>
-            <input
-              type="text"
+          <Campo label="Nome completo">
+            <Input
               value={nomeForm}
               onChange={(e) => setNomeForm(e.target.value)}
               placeholder="Maria da Silva"
-              className="min-h-[44px] rounded-md border border-amber-400 bg-white px-3 text-base dark:border-amber-600 dark:bg-zinc-950"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium">CPF</span>
-            <input
-              type="text"
+          </Campo>
+          <Campo label="CPF">
+            <Input
               inputMode="numeric"
               value={cpfForm}
               onChange={(e) => setCpfForm(e.target.value)}
               placeholder="000.000.000-00"
-              className="min-h-[44px] rounded-md border border-amber-400 bg-white px-3 text-base dark:border-amber-600 dark:bg-zinc-950"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium">Sua chave PIX (recebimento)</span>
-            <input
-              type="text"
+          </Campo>
+          <Campo label="Sua chave PIX (recebimento)">
+            <Input
               value={chavePixForm}
               onChange={(e) => setChavePixForm(e.target.value)}
-              placeholder="email, telefone, CPF ou chave aleatória"
-              className="min-h-[44px] rounded-md border border-amber-400 bg-white px-3 text-base dark:border-amber-600 dark:bg-zinc-950"
+              placeholder="e-mail, telefone, CPF ou chave aleatória"
             />
-          </label>
-          <button
-            type="button"
+          </Campo>
+          <Botao
+            variante="primary"
+            bloco
             onClick={salvarPerfil}
-            disabled={
-              agindo ||
-              !nomeForm.trim() ||
-              !cpfForm.trim() ||
-              !chavePixForm.trim()
-            }
-            className="min-h-[48px] rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+            disabled={agindo || !nomeForm.trim() || !cpfForm.trim() || !chavePixForm.trim()}
           >
-            {agindo ? "Salvando..." : "Salvar perfil"}
-          </button>
-        </section>
+            {agindo ? "Salvando…" : "Salvar perfil"}
+          </Botao>
+        </Card>
       )}
 
-      {/* Geração de cobrança — perfil completo, sem cobrança ativa. */}
+      {/* gerar cobrança — perfil completo, sem cobrança ativa */}
       {sessao?.perfilPagamentoCompleto && !cobranca && (
-        <section className="flex flex-col gap-3">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Gere sua cobrança PIX para pagar o ingresso.
-          </p>
-          <button
-            type="button"
-            onClick={gerar}
-            disabled={agindo}
-            className="min-h-[48px] rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            {agindo ? "Gerando..." : "Gerar cobrança PIX"}
-          </button>
-        </section>
+        <Card className="flex flex-col gap-3 p-6">
+          <p className="text-sm text-muted">Gere sua cobrança PIX para pagar o ingresso.</p>
+          <Botao variante="pix" bloco grande onClick={gerar} disabled={agindo}>
+            <Zap size={17} /> {agindo ? "Gerando…" : "Gerar cobrança PIX"}
+          </Botao>
+        </Card>
       )}
 
-      {/* Cobrança ativa — QR + copia-e-cola. */}
+      {/* cobrança ativa — QR + copia-e-cola */}
       {cobranca && (
-        <section className="flex flex-col items-center gap-3">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Valor: <strong>R$ {cobranca.valor}</strong>
+        <Card className="flex flex-col items-center gap-4 p-6">
+          <p className="text-sm text-muted">
+            Valor:{" "}
+            <b className="font-display text-lg text-gold">{formatBRL(cobranca.valor)}</b>
           </p>
           {cobranca.qrCodeBase64 && (
-            // next/image não otimiza data-URIs base64 (não há URL remota
-            // para o loader processar) e a imagem do QR vem inline da API.
-            // <img> é a escolha correta aqui — warning suprimido conscientemente.
+            // next/image não otimiza data-URIs base64 e o QR vem inline da API.
+            // <img> é a escolha correta — warning suprimido conscientemente.
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`data:image/png;base64,${cobranca.qrCodeBase64}`}
               alt="QR code do PIX"
-              className="h-56 w-56 rounded-md border border-zinc-300 dark:border-zinc-700"
+              className="h-56 w-56 rounded-xl border border-line2 bg-white p-2"
             />
           )}
-          <div className="flex w-full flex-col gap-1">
-            <span className="text-xs font-medium">PIX copia-e-cola</span>
+          <div className="flex w-full flex-col gap-2">
+            <span className="text-xs font-semibold">PIX copia-e-cola</span>
             <textarea
               readOnly
               value={cobranca.copiaECola}
               rows={3}
-              className="rounded-md border border-zinc-300 bg-zinc-50 p-2 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+              className="rounded-xl border border-line2 bg-bg2 p-2.5 text-xs text-text"
             />
-            <button
-              type="button"
-              onClick={copiar}
-              className="min-h-[44px] rounded-md border border-zinc-400 px-4 text-sm font-medium dark:border-zinc-600"
-            >
+            <Botao variante="ghost" bloco onClick={copiar}>
+              {copiado ? <CheckCircle2 size={15} /> : <Copy size={15} />}
               {copiado ? "Copiado!" : "Copiar código"}
-            </button>
+            </Botao>
           </div>
-          <p className="text-xs text-zinc-500">
-            Expira em: {new Date(cobranca.expiraEm).toLocaleString("pt-BR")}
+          <p className="flex items-center gap-1.5 text-xs text-muted">
+            <Clock size={13} /> Expira em{" "}
+            {new Date(cobranca.expiraEm).toLocaleString("pt-BR")}
           </p>
-          <p className="rounded-md border border-blue-300 bg-blue-50 p-3 text-center text-sm text-blue-800 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-300">
-            Aguardando confirmação do pagamento. Assim que o PIX cair, a gente
-            confirma automaticamente — você não precisa avisar.
-          </p>
-          <button
-            type="button"
-            onClick={gerar}
-            disabled={agindo}
-            className="min-h-[44px] rounded-md border border-zinc-300 px-4 text-xs disabled:opacity-50 dark:border-zinc-700"
-          >
-            {agindo ? "Gerando..." : "Gerar nova cobrança"}
-          </button>
-        </section>
+          <Callout tom="neutral">
+            Aguardando confirmação do pagamento. Assim que o PIX cair, a gente confirma
+            automaticamente — você não precisa avisar.
+          </Callout>
+          <Botao variante="ghost" bloco onClick={gerar} disabled={agindo}>
+            {agindo ? "Gerando…" : "Gerar nova cobrança"}
+          </Botao>
+        </Card>
       )}
-
-      <Link
-        href={`/caixinhas/${caixinhaId}`}
-        className="mt-2 text-center text-sm text-zinc-500 underline"
-      >
-        Voltar para a Caixinha
-      </Link>
     </main>
   );
 }

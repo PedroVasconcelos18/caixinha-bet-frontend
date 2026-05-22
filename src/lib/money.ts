@@ -44,4 +44,20 @@ export function moneyToApi(value: Decimal): MoneyString {
   return value.toFixed(2);
 }
 
+/**
+ * Formata para exibição em Real (ex.: `"1234.5"` → `"R$ 1.234,50"`).
+ *
+ * Aceita `MoneyString` (vinda da API) ou `Decimal` (resultado de cálculo).
+ * A conversão para `number` acontece SÓ aqui, na última milha de
+ * apresentação, sobre um valor já validado por `moneyFromApi` — nunca em
+ * cálculo. `Intl.NumberFormat` é puramente cosmético neste ponto.
+ */
+export function formatBRL(value: MoneyString | Decimal): string {
+  const d = typeof value === "string" ? moneyFromApi(value) : value;
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(d.toNumber());
+}
+
 export { Decimal };

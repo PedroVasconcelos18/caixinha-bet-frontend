@@ -1,23 +1,47 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { use } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState, use } from "react";
+import {
+  Users,
+  Wallet,
+  Calendar,
+  Coins,
+  Crown,
+  Clock,
+  CheckCircle2,
+  Circle,
+  Trophy,
+  ShieldCheck,
+  Mail,
+} from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { me } from "@/lib/auth";
-import { buscarCaixinha, convidar, encerrarPrazo } from "@/lib/caixinha";
+import {
+  buscarCaixinha,
+  convidar,
+  encerrarPrazo,
+  aceitarConvite,
+  definirPalpite,
+} from "@/lib/caixinha";
+import { formatBRL } from "@/lib/money";
+import { estadoVisual, bandeiraDe } from "@/lib/ui";
+import { useToast } from "@/components/Toasts";
 import TimelineEstado from "@/components/TimelineEstado";
-import type { CaixinhaResponse } from "@/types/caixinha";
+import { Botao, BotaoLink, Card, Input, StatusPill, VoltarLink, cx } from "@/components/ui";
+import type { CaixinhaResponse, ParticipanteResumoResponse } from "@/types/caixinha";
 
 /**
- * Detalhe da Caixinha (Story 2.2 + Story 2.4).
+ * Detalhe da Caixinha (Story 2.2/2.4/3.5/4.x — redesenhado na Story 7.5 do
+ * Épico 7 para o design aprovado: cabeçalho de confronto, timeline,
+ * painel de participantes e coluna de resumo/regras.
  *
- * Client component porque (a) precisa do cookie de sessão na request
- * (`credentials: "include"`), (b) o tom NFR-6 é interativo, (c) a Story
- * 2.4 adiciona seção interativa "Convidar mais" para o dono.
+ * A LÓGICA é preservada (buscarCaixinha, me, convidar, encerrarPrazo,
+ * checagens de permissão). As ações por participante do design eram "demo"
+ * (agir por terceiros); aqui cada usuário só age na PRÓPRIA linha — aceitar
+ * o convite, definir palpite e ir pagar.
  *
- * Em erro (404 — não participante; 401 — sessão expirada), mostra tela
- * amigável.
+ * Mobile-first 360×640: 2 colunas empilham, timeline quebra sem scroll
+ * horizontal (NFR-3).
  */
 export default function CaixinhaDetalhePage({
   params,
@@ -25,9 +49,9 @@ export default function CaixinhaDetalhePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">(
-    "carregando",
-  );
+  const idNum = parseInt(id, 10);
+  const { notificar } = useToast();
+  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [caixinha, setCaixinha] = useState<CaixinhaResponse | null>(null);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [meuEmail, setMeuEmail] = useState<string | null>(null);
@@ -35,8 +59,8 @@ export default function CaixinhaDetalhePage({
   const carregar = useCallback(async () => {
     try {
       const [c, sessao] = await Promise.all([
-        buscarCaixinha(parseInt(id, 10)),
-        me().catch(() => null), // me() pode falhar se sessão expirou; tratamos depois
+        buscarCaixinha(idNum),
+        me().catch(() => null),
       ]);
       setCaixinha(c);
       setMeuEmail(sessao?.email ?? null);
@@ -49,354 +73,448 @@ export default function CaixinhaDetalhePage({
       } else if (e instanceof ApiError) {
         setMensagem(e.problem.detail ?? e.problem.title);
       } else {
-        setMensagem("Erro ao carregar a Caixinha.");
+        setMensagem("Erro ao carregar a caixinha.");
       }
       setEstado("erro");
     }
-  }, [id]);
+  }, [idNum]);
 
   useEffect(() => {
     let cancelado = false;
-    async function executar() {
-      if (!cancelado) {
-        await carregar();
-      }
-    }
-    void executar();
+    void (async () => {
+      if (!cancelado) await carregar();
+    })();
     return () => {
       cancelado = true;
     };
   }, [carregar]);
 
-  // Story 4.5: encerrar prazo manualmente. Ação relevante — confirma antes.
+  // Story 4.5 (FR-15): encerrar prazo manualmente — ação relevante, confirma.
   async function handleEncerrarPrazo() {
     if (
       !window.confirm(
-        "Encerrar o prazo agora? A Caixinha vai formar (se tiver pagamentos" +
-          " suficientes) ou ser cancelada. Não dá para desfazer.",
+        "Encerrar o prazo agora? A caixinha vai formar (se tiver pagamentos " +
+          "suficientes) ou ser cancelada. Não dá para desfazer.",
       )
     ) {
       return;
     }
     try {
-      await encerrarPrazo(parseInt(id, 10));
+      await encerrarPrazo(idNum);
+      notificar("Prazo de entrada encerrado.", "alert");
       await carregar();
     } catch (e) {
-      setMensagem(
+      notificar(
         e instanceof ApiError
           ? (e.problem.detail ?? e.problem.title)
           : "Não foi possível encerrar o prazo.",
+        "alert",
       );
     }
   }
 
   if (estado === "carregando") {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando…</p>
       </main>
     );
   }
 
   if (estado === "erro" || !caixinha) {
     return (
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-        <h1 className="text-xl font-semibold">Não foi possível abrir</h1>
-        <p className="max-w-xs text-sm text-zinc-600 dark:text-zinc-400">
-          {mensagem ?? "Erro desconhecido."}
-        </p>
-        <Link
-          href="/"
-          className="min-h-[44px] flex items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-        >
+      <main className="cx-fade flex flex-col items-center gap-4 py-16 text-center">
+        <h1 className="font-display text-xl">Não foi possível abrir</h1>
+        <p className="max-w-xs text-sm text-muted">{mensagem ?? "Erro desconhecido."}</p>
+        <BotaoLink href="/" variante="primary">
           Voltar ao início
-        </Link>
+        </BotaoLink>
       </main>
     );
   }
 
+  const st = estadoVisual(caixinha.estado);
   const dono = caixinha.participantes.find((p) => p.dono);
   const souDono = !!dono && !!meuEmail && dono.email === meuEmail;
   const aceitaNovosConvites =
-    caixinha.estado === "coletando_convites" ||
-    caixinha.estado === "coletando_pagamentos";
-
-  // Story 3.2 (FR-7): botão "Pagar ingresso" visível quando a Caixinha
-  // está em coletando_pagamentos E o Participante logado está `aceito`
-  // com palpite escolhido. O back revalida tudo de novo (defesa real).
-  const meuParticipante = caixinha.participantes.find(
-    (p) => p.email === meuEmail,
-  );
-  const podePagar =
-    caixinha.estado === "coletando_pagamentos" &&
-    meuParticipante?.status === "aceito" &&
-    meuParticipante?.palpiteResultadoPossivelId != null;
-  const jaPagando = meuParticipante?.status === "pagamento_iniciado";
+    caixinha.estado === "coletando_convites" || caixinha.estado === "coletando_pagamentos";
 
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
-          Caixinha
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {caixinha.titulo}
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          {caixinha.ladoA} × {caixinha.ladoB}
-        </p>
+    <main className="cx-fade flex flex-col gap-5">
+      <VoltarLink href="/">Minhas caixinhas</VoltarLink>
+
+      {/* ---------------- cabeçalho de confronto ---------------- */}
+      <header
+        className="relative overflow-hidden rounded-[22px] border border-line bg-gradient-to-br from-[#0e1a2e] to-[#0a1322] px-6 py-7 sm:px-8"
+        style={{ borderTopColor: st.cor, borderTopWidth: 3 }}
+      >
+        <div
+          className="pointer-events-none absolute -right-20 -top-24 h-[300px] w-[300px] rounded-full opacity-20"
+          style={{ background: `radial-gradient(circle,${st.cor},transparent 65%)` }}
+          aria-hidden
+        />
+        <div className="relative">
+          <StatusPill label={st.label} cor={st.cor} glow={st.glow} />
+          <div className="my-4 flex items-center justify-center gap-6">
+            <Confronto bandeira={bandeiraDe(caixinha.ladoA)} nome={caixinha.ladoA} />
+            <span className="font-display tracking-wide text-muted">VS</span>
+            <Confronto bandeira={bandeiraDe(caixinha.ladoB)} nome={caixinha.ladoB} />
+          </div>
+          <h1 className="text-center font-display text-[22px] tracking-wide">
+            {caixinha.titulo}
+          </h1>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[13px] text-muted">
+            <Coins size={16} className="text-gold" />
+            Prêmio atual
+            <b className="font-display text-xl text-gold">{formatBRL(caixinha.premioPotencial)}</b>
+            <span>
+              · arrecadado {formatBRL(caixinha.totalCustodiado)} − taxa{" "}
+              {formatBRL(caixinha.taxaServico)}
+            </span>
+          </div>
+        </div>
       </header>
 
-      {/* Story 6.2 (FR-17): timeline de Estado da Caixinha. */}
+      {/* ---------------- timeline ---------------- */}
       <TimelineEstado estado={caixinha.estado} />
 
-      <section className="flex flex-col gap-2 text-sm">
-        <Linha k="Valor do ingresso" v={`R$ ${caixinha.valorIngresso}`} />
-        <Linha
-          k="Mínimo de Participantes"
-          v={String(caixinha.minimoParticipantes)}
-        />
-        <Linha
-          k="Nº de Ganhadores"
-          v={String(caixinha.numeroGanhadores)}
-        />
-        <Linha k="Taxa de Serviço" v={`R$ ${caixinha.taxaServico}`} />
-        <Linha k="Prêmio máximo teórico" v={`R$ ${caixinha.premioMaximoTeorico}`} />
-        <Linha
-          k="Total custodiado (confirmado)"
-          v={`R$ ${caixinha.totalCustodiado}`}
-        />
-        <Linha k="Prêmio potencial" v={`R$ ${caixinha.premioPotencial}`} />
-        <Linha k="Prazo de entrada" v={caixinha.prazoEntrada} />
-        <Linha k="Data de apuração" v={caixinha.dataApuracao} />
-      </section>
+      {/* ---------------- duas colunas ---------------- */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px] lg:items-start">
+        {/* participantes */}
+        <Card className="p-6">
+          <div className="mb-4 flex items-center justify-between gap-2 text-sm font-bold">
+            <span className="flex items-center gap-2">
+              <Users size={16} /> Participantes
+            </span>
+            <span className="text-xs font-medium text-muted">
+              {caixinha.participantes.filter((p) => p.status === "pago").length}/
+              {caixinha.minimoParticipantes} pagos
+            </span>
+          </div>
 
-      <section>
-        <h2 className="text-sm font-medium">Resultados Possíveis</h2>
-        <ul className="mt-2 list-disc pl-5 text-sm">
-          {caixinha.resultadosPossiveis.map((r) => (
-            <li key={r.ordem}>{r.rotulo}</li>
-          ))}
-        </ul>
-      </section>
+          <ul className="flex flex-col gap-2.5">
+            {caixinha.participantes.map((p) => (
+              <ParticipanteLinha
+                key={p.email}
+                p={p}
+                caixinha={caixinha}
+                ehVoce={p.email === meuEmail}
+                onMudou={carregar}
+                notificar={notificar}
+              />
+            ))}
+          </ul>
 
-      <section>
-        <h2 className="text-sm font-medium">Participantes</h2>
-        <p className="mt-1 text-xs text-zinc-500">
-          Transparência total: todo mundo vê quem aceitou, quem está pagando
-          e quem já pagou. Sem depender da palavra de ninguém.
-        </p>
-        <ul className="mt-2 flex flex-col gap-2 text-sm">
-          {caixinha.participantes.map((p) => (
-            <li
-              key={p.email}
-              className="flex flex-col gap-0.5 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
-            >
-              <div className="flex justify-between gap-2">
-                <span className="truncate">
-                  {p.email} {p.dono && <em className="text-xs">(dono)</em>}
-                </span>
-                <StatusBadge status={p.status} />
+          {souDono && aceitaNovosConvites && (
+            <ConvidarMais caixinhaId={caixinha.id} onConvidados={carregar} notificar={notificar} />
+          )}
+        </Card>
+
+        {/* coluna lateral */}
+        <aside className="flex flex-col gap-4">
+          <Card className="p-6">
+            <div className="mb-3 flex items-center gap-2 text-sm font-bold">
+              <Wallet size={16} /> Resumo
+            </div>
+            <SideRow k="Ingresso" v={formatBRL(caixinha.valorIngresso)} />
+            <SideRow k="Mínimo de pagantes" v={String(caixinha.minimoParticipantes)} />
+            <SideRow k="Nº de ganhadores" v={String(caixinha.numeroGanhadores)} />
+            <SideRow
+              k="Prazo de entrada"
+              v={caixinha.prazoEntrada}
+              icone={<Calendar size={13} />}
+            />
+            <SideRow k="Apuração" v={caixinha.dataApuracao} icone={<Calendar size={13} />} />
+            <SideRow k="Arrecadado" v={formatBRL(caixinha.totalCustodiado)} />
+            <SideRow k="Taxa de serviço" v={`− ${formatBRL(caixinha.taxaServico)}`} />
+            <div className="mt-3 flex items-center justify-between rounded-xl border border-gold/30 bg-gold/10 px-4 py-3.5">
+              <span>Prêmio</span>
+              <b className="font-display text-xl text-gold">
+                {formatBRL(caixinha.premioPotencial)}
+              </b>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="mb-2.5 flex items-center gap-2 text-sm font-bold">
+              <ShieldCheck size={15} className="text-green" /> Regras
+            </div>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
+              <li>Prêmio dividido igualmente entre quem acertar.</li>
+              <li>PIX liberado ao atingir o mínimo de aceites.</li>
+              <li>Sem mínimo de pagantes → cancela e devolve.</li>
+              <li>Valor, prazos e resultados travados após a criação.</li>
+            </ul>
+          </Card>
+
+          {/* dono: apurar (Story 4.2) */}
+          {souDono && caixinha.estado === "formada" && (
+            <Card className="border-gold/35 p-6">
+              <div className="mb-1.5 flex items-center gap-2 text-sm font-bold">
+                <Trophy size={15} className="text-gold" /> Apurar resultado
               </div>
-              {p.palpiteRotulo && (
-                <span className="text-xs text-zinc-500">
-                  Palpite: {p.palpiteRotulo}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
+              <p className="mb-3 text-xs leading-snug text-muted">
+                Você seleciona o resultado real do confronto. O prêmio é transferido
+                automaticamente — a ação é irreversível.
+              </p>
+              <BotaoLink href={`/caixinhas/${caixinha.id}/apuracao`} variante="primary" bloco>
+                <Crown size={16} /> Apurar e pagar vencedores
+              </BotaoLink>
+            </Card>
+          )}
 
-      {(podePagar || jaPagando) && (
-        <Link
-          href={`/caixinhas/${caixinha.id}/pagamento`}
-          className="flex min-h-[48px] items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          {jaPagando ? "Ver pagamento PIX" : "Pagar ingresso via PIX"}
-        </Link>
-      )}
+          {/* acerto de contas (Story 4.4) */}
+          {(caixinha.estado === "apurada" ||
+            caixinha.estado === "repasse_parcial" ||
+            caixinha.estado === "repassada") && (
+            <BotaoLink href={`/caixinhas/${caixinha.id}/acerto`} variante="primary" bloco>
+              <Trophy size={16} /> Ver acerto de contas
+            </BotaoLink>
+          )}
 
-      {/* Story 4.2 (FR-12): só o Organizador apura, e só Caixinha formada. */}
-      {souDono && caixinha.estado === "formada" && (
-        <Link
-          href={`/caixinhas/${caixinha.id}/apuracao`}
-          className="flex min-h-[48px] items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white dark:bg-emerald-500"
-        >
-          Apurar o Resultado Final
-        </Link>
-      )}
-
-      {/* Story 4.4 (FR-14): Acerto de Contas visível a partir de apurada. */}
-      {(caixinha.estado === "apurada" ||
-        caixinha.estado === "repasse_parcial" ||
-        caixinha.estado === "repassada") && (
-        <Link
-          href={`/caixinhas/${caixinha.id}/acerto`}
-          className="flex min-h-[48px] items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          Ver Acerto de Contas
-        </Link>
-      )}
-
-      {souDono && aceitaNovosConvites && (
-        <ConvidarMais
-          caixinhaId={caixinha.id}
-          onConvidados={() => void carregar()}
-        />
-      )}
-
-      {/* Story 4.5 (FR-15): encerrar prazo — só dono, antes da formação. */}
-      {souDono && aceitaNovosConvites && (
-        <button
-          type="button"
-          onClick={handleEncerrarPrazo}
-          className="min-h-[44px] rounded-md border border-zinc-400 px-4 text-xs font-medium text-zinc-600 dark:border-zinc-600 dark:text-zinc-400"
-        >
-          Encerrar prazo de entrada agora
-        </button>
-      )}
+          {/* dono: encerrar prazo (Story 4.5/FR-15) */}
+          {souDono && aceitaNovosConvites && (
+            <Botao variante="ghost" bloco onClick={handleEncerrarPrazo}>
+              <Clock size={15} /> Encerrar prazo de entrada
+            </Botao>
+          )}
+        </aside>
+      </div>
     </main>
   );
 }
 
-function Linha({ k, v }: { k: string; v: string }) {
+/* ----------------------------------------------------------------------- */
+/* Confronto — bloco bandeira + nome.                                      */
+/* ----------------------------------------------------------------------- */
+function Confronto({ bandeira, nome }: { bandeira: string; nome: string }) {
   return (
-    <div className="flex justify-between gap-3">
-      <span className="text-zinc-500">{k}</span>
+    <span className="flex flex-1 flex-col items-center gap-1.5 text-center text-sm font-bold">
+      <span className="text-4xl leading-none" aria-hidden>
+        {bandeira}
+      </span>
+      <span className="line-clamp-1">{nome}</span>
+    </span>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+/* ParticipanteLinha — uma linha do painel de participantes.               */
+/* As ações só aparecem na linha do PRÓPRIO usuário (não há mais o modo    */
+/* "demo" de agir por terceiros).                                          */
+/* ----------------------------------------------------------------------- */
+function ParticipanteLinha({
+  p,
+  caixinha,
+  ehVoce,
+  onMudou,
+  notificar,
+}: {
+  p: ParticipanteResumoResponse;
+  caixinha: CaixinhaResponse;
+  ehVoce: boolean;
+  onMudou: () => Promise<void>;
+  notificar: (msg: string, tipo?: "mail" | "pix" | "win" | "alert") => void;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  const venceu = caixinha.estado === "apurada" && p.status === "pago"; // detalhe do vencedor vive no acerto
+
+  // estado da caixinha que ainda aceita aceitar/palpitar
+  const fasePreJogo =
+    caixinha.estado === "coletando_convites" || caixinha.estado === "coletando_pagamentos";
+
+  async function aceitar() {
+    setOcupado(true);
+    try {
+      await aceitarConvite(caixinha.id);
+      notificar("Convite aceito! Agora escolha seu palpite.", "win");
+      await onMudou();
+    } catch (e) {
+      notificar(
+        e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : "Não foi possível aceitar.",
+        "alert",
+      );
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function palpitar(resultadoId: number) {
+    setOcupado(true);
+    try {
+      await definirPalpite(caixinha.id, resultadoId);
+      notificar("Palpite registrado.", "win");
+      await onMudou();
+    } catch (e) {
+      notificar(
+        e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : "Não foi possível palpitar.",
+        "alert",
+      );
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  const iconeStatus =
+    p.status === "pago" ? (
+      <CheckCircle2 size={16} className="text-green" />
+    ) : p.status === "aceito" || p.status === "pagamento_iniciado" ? (
+      <Clock size={16} className="text-amber" />
+    ) : (
+      <Circle size={16} className="text-muted" />
+    );
+
+  const subStatus =
+    p.status === "pago"
+      ? "PIX confirmado"
+      : p.status === "pagamento_iniciado"
+        ? "Pagando…"
+        : p.status === "aceito"
+          ? "Aceitou — aguardando PIX"
+          : "Convite enviado";
+
+  // pode pagar: é você, aceito, com palpite, na fase de pagamentos
+  const podePagar =
+    ehVoce &&
+    caixinha.estado === "coletando_pagamentos" &&
+    p.status === "aceito" &&
+    p.palpiteResultadoPossivelId != null;
+  const jaPagando = ehVoce && p.status === "pagamento_iniciado";
+
+  return (
+    <li
+      className={cx(
+        "flex flex-col gap-3 rounded-xl border bg-bg2 p-3.5 sm:flex-row sm:items-center sm:justify-between",
+        venceu ? "border-gold/40 bg-gold/[0.06]" : "border-line",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className={cx(
+            "grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg",
+            p.status === "pago" && "bg-green/15",
+            (p.status === "aceito" || p.status === "pagamento_iniciado") && "bg-amber/15",
+            p.status === "convidado" && "bg-surface",
+          )}
+        >
+          {iconeStatus}
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13.5px] font-semibold">
+            {p.dono && <Crown size={12} className="text-gold" />}
+            <span className="truncate">{p.email}</span>
+            {ehVoce && <span className="text-[11px] text-muted">(você)</span>}
+          </div>
+          <div className="text-[11.5px] text-muted">
+            {subStatus}
+            {p.palpiteRotulo && <span className="text-blue"> · palpite: {p.palpiteRotulo}</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* ações reais — só na própria linha */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {ehVoce && p.status === "convidado" && fasePreJogo && (
+          <Botao variante="mini" onClick={aceitar} disabled={ocupado}>
+            Aceitar convite
+          </Botao>
+        )}
+        {ehVoce && (p.status === "aceito" || p.status === "convidado") && fasePreJogo && (
+          <select
+            value={p.palpiteResultadoPossivelId ?? ""}
+            disabled={ocupado}
+            onChange={(e) => e.target.value && palpitar(parseInt(e.target.value, 10))}
+            className="min-h-[44px] max-w-[150px] rounded-lg border border-line2 bg-surface px-2.5 text-xs text-text"
+          >
+            <option value="">Escolher palpite…</option>
+            {caixinha.resultadosPossiveis.map((r) => (
+              <option key={r.ordem} value={r.id}>
+                {r.rotulo}
+              </option>
+            ))}
+          </select>
+        )}
+        {(podePagar || jaPagando) && (
+          <BotaoLink href={`/caixinhas/${caixinha.id}/pagamento`} variante="pix">
+            {jaPagando ? "Ver pagamento" : "Pagar PIX"}
+          </BotaoLink>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+/* SideRow — linha do painel de resumo.                                    */
+/* ----------------------------------------------------------------------- */
+function SideRow({ k, v, icone }: { k: string; v: string; icone?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-line py-2 text-[13px] last:border-none">
+      <span className="flex items-center gap-1.5 text-muted">
+        {icone}
+        {k}
+      </span>
       <span className="text-right">{v}</span>
     </div>
   );
 }
 
-/**
- * Badge do Status do Participante (Story 3.5, FR-10 AC-2).
- *
- * Rótulo amigável (não o enum cru) e cor distinta — `pagamento_iniciado`
- * NÃO se confunde com `aceito`: quem tem cobrança em aberto ("pagando…")
- * é visualmente diferente de quem só aceitou.
- */
-function StatusBadge({ status }: { status: string }) {
-  const mapa: Record<string, { texto: string; classe: string }> = {
-    convidado: {
-      texto: "convidado",
-      classe: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-    },
-    aceito: {
-      texto: "aceitou",
-      classe:
-        "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-    },
-    pagamento_iniciado: {
-      texto: "pagando…",
-      classe:
-        "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-    },
-    pago: {
-      texto: "pagou ✓",
-      classe:
-        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-    },
-  };
-  const info = mapa[status] ?? {
-    texto: status,
-    classe: "bg-zinc-100 text-zinc-600",
-  };
-  return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${info.classe}`}
-    >
-      {info.texto}
-    </span>
-  );
-}
-
-/**
- * Bloco "Convidar mais Participantes" (Story 2.4). Só aparece se o
- * usuário logado é o dono E a Caixinha aceita novos convites (estado
- * coletando_convites/pagamentos).
- */
+/* ----------------------------------------------------------------------- */
+/* ConvidarMais — bloco de convite (Story 2.4). Só dono, estados de coleta. */
+/* ----------------------------------------------------------------------- */
 function ConvidarMais({
   caixinhaId,
   onConvidados,
+  notificar,
 }: {
   caixinhaId: number;
-  onConvidados: () => void;
+  onConvidados: () => Promise<void>;
+  notificar: (msg: string, tipo?: "mail" | "pix" | "win" | "alert") => void;
 }) {
   const [valor, setValor] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
 
-  async function submeter(e: React.FormEvent) {
-    e.preventDefault();
-    setEnviando(true);
-    setFeedback(null);
-    setErro(null);
+  async function convidarMais() {
     const emails = valor
       .split(/[\n,;]/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
     if (emails.length === 0) {
-      setErro("Informe ao menos um e-mail.");
-      setEnviando(false);
+      notificar("Informe ao menos um e-mail.", "alert");
       return;
     }
+    setEnviando(true);
     try {
       const r = await convidar(caixinhaId, emails);
       const partes: string[] = [];
-      if (r.convidados.length > 0) {
-        partes.push(`${r.convidados.length} convidado(s)`);
-      }
-      if (r.jaPresentes.length > 0) {
-        partes.push(`${r.jaPresentes.length} já estava(m)`);
-      }
-      setFeedback(partes.join(" · ") || "Nada a convidar.");
+      if (r.convidados.length) partes.push(`${r.convidados.length} convidado(s)`);
+      if (r.jaPresentes.length) partes.push(`${r.jaPresentes.length} já estava(m)`);
+      notificar(partes.join(" · ") || "Nada a convidar.", "mail");
       setValor("");
-      onConvidados();
+      await onConvidados();
     } catch (e) {
-      if (e instanceof ApiError) {
-        setErro(e.problem.detail ?? e.problem.title);
-      } else {
-        setErro("Algo deu errado. Tente de novo.");
-      }
+      notificar(
+        e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : "Algo deu errado.",
+        "alert",
+      );
     } finally {
       setEnviando(false);
     }
   }
 
   return (
-    <section className="rounded-md border border-zinc-300 p-3 dark:border-zinc-700">
-      <h2 className="text-sm font-medium">Convidar mais Participantes</h2>
-      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-        Um por linha ou separados por vírgula.
-      </p>
-      <form onSubmit={submeter} className="mt-2 flex flex-col gap-2">
-        <textarea
-          rows={3}
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          type="email"
           value={valor}
-          onChange={(ev) => setValor(ev.target.value)}
-          placeholder="amigo@exemplo.com"
-          className="rounded-md border border-zinc-300 bg-white p-2 text-sm"
+          onChange={(e) => setValor(e.target.value)}
+          placeholder="Convidar mais alguém por e-mail"
         />
-        <button
-          type="submit"
-          disabled={enviando}
-          className="min-h-[44px] rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          {enviando ? "Convidando..." : "Convidar"}
-        </button>
-        {feedback && (
-          <p className="text-sm text-emerald-700 dark:text-emerald-400">
-            {feedback}
-          </p>
-        )}
-        {erro && (
-          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-            {erro}
-          </p>
-        )}
-      </form>
-    </section>
+        <Botao variante="primary" onClick={convidarMais} disabled={enviando}>
+          <Mail size={15} /> {enviando ? "Convidando…" : "Convidar"}
+        </Botao>
+      </div>
+    </div>
   );
 }

@@ -1,31 +1,34 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { Mail, ShieldCheck, CheckCircle2, Lock } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { atualizarChavePix, me, type Sessao } from "@/lib/auth";
+import { aceitarConvite, buscarConvite, definirPalpite } from "@/lib/caixinha";
+import { formatBRL } from "@/lib/money";
+import { estadoVisual, bandeiraDe } from "@/lib/ui";
+import { useToast } from "@/components/Toasts";
 import {
-  aceitarConvite,
-  buscarConvite,
-  definirPalpite,
-} from "@/lib/caixinha";
+  Botao,
+  BotaoLink,
+  Card,
+  Callout,
+  Campo,
+  Input,
+  StatusPill,
+  cx,
+} from "@/components/ui";
 import type { ConviteResponse } from "@/types/caixinha";
 
-/** Type do back para reconhecer 422 "chave PIX obrigatória" sem inspeção de texto. */
-const TYPE_CHAVE_PIX_OBRIGATORIA =
-  "https://caixinha.bet/problems/chave-pix-obrigatoria";
+/** Type do back para reconhecer 422 "chave PIX obrigatória". */
+const TYPE_CHAVE_PIX_OBRIGATORIA = "https://caixinha.bet/problems/chave-pix-obrigatoria";
 
 /**
- * Tela do convite (Story 2.5, FR-5).
+ * Tela do convite (Story 2.5 / FR-5 — redesenhada na Story 7.6 do Épico 7).
  *
- * Fluxo:
- *  - Autenticação (cookie da Story 2.1) é obrigatória (middleware do
- *    `proxy.ts` redireciona se não tiver cookie).
- *  - GET /caixinhas/{id}/convite — 200 mostra detalhe restrito do
- *    convidado; 404 → não convidado / não existe (anti-enumeração).
- *  - Se status=convidado: botão "Aceitar convite" (POST /aceitar).
- *  - Status>=aceito E prazo no futuro: seletor de Palpite (radios).
- *  - Prazo encerrado: radios desabilitados, mensagem amigável.
+ * A LÓGICA é preservada: aceitar convite, escolher palpite (radios),
+ * cadastrar chave PIX quando o palpite exige (com retomada do palpite
+ * pendente). Mobile-first 360×640 (NFR-3).
  */
 export default function ConvitePage({
   params,
@@ -33,27 +36,19 @@ export default function ConvitePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">(
-    "carregando",
-  );
+  const { notificar } = useToast();
+  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [convite, setConvite] = useState<ConviteResponse | null>(null);
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [agindo, setAgindo] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
-  // v5 FR-5: id do palpite escolhido enquanto o usuário ainda não cadastrou
-  // chave PIX — guardado para retomar depois que ele cadastrar.
   const [palpitePendente, setPalpitePendente] = useState<number | null>(null);
   const [chavePixForm, setChavePixForm] = useState("");
 
   const carregar = useCallback(async () => {
     try {
-      // v5: carrega convite + sessão (com chave PIX) em paralelo.
-      const [c, s] = await Promise.all([
-        buscarConvite(parseInt(id, 10)),
-        me(),
-      ]);
+      const [c, s] = await Promise.all([buscarConvite(parseInt(id, 10)), me()]);
       setConvite(c);
       setSessao(s);
       setEstado("ok");
@@ -73,12 +68,9 @@ export default function ConvitePage({
 
   useEffect(() => {
     let cancelado = false;
-    async function executar() {
-      if (!cancelado) {
-        await carregar();
-      }
-    }
-    void executar();
+    void (async () => {
+      if (!cancelado) await carregar();
+    })();
     return () => {
       cancelado = true;
     };
@@ -87,16 +79,15 @@ export default function ConvitePage({
   async function aceitar() {
     if (!convite) return;
     setAgindo(true);
-    setFeedback(null);
     setErroAcao(null);
     try {
       await aceitarConvite(convite.caixinhaId);
+      notificar("Convite aceito! Agora escolha seu palpite.", "win");
       await carregar();
-      setFeedback("Convite aceito! Agora você pode escolher seu palpite.");
     } catch (e) {
       setErroAcao(
         e instanceof ApiError
-          ? e.problem.detail ?? e.problem.title
+          ? (e.problem.detail ?? e.problem.title)
           : "Algo deu errado. Tente de novo.",
       );
     } finally {
@@ -104,40 +95,42 @@ export default function ConvitePage({
     }
   }
 
-  async function palpitar(resultadoPossivelId: number) {
+  /** Envia o palpite à API. Separado de `palpitar` para que `salvarChavePix`
+   *  possa retomar o palpite pendente sem depender do `sessao` do closure
+   *  (que ainda está desatualizado logo após `setSessao`). */
+  async function enviarPalpite(resultadoPossivelId: number) {
     if (!convite) return;
-    // v5 FR-5: precisa de chave PIX cadastrada antes de palpitar. Guarda
-    // o palpite escolhido e mostra o form — após salvar, retoma o palpite.
-    if (!sessao?.chavePix) {
-      setPalpitePendente(resultadoPossivelId);
-      return;
-    }
     setAgindo(true);
-    setFeedback(null);
     setErroAcao(null);
     try {
       await definirPalpite(convite.caixinhaId, resultadoPossivelId);
+      notificar("Palpite salvo!", "win");
       await carregar();
-      setFeedback("Palpite salvo!");
     } catch (e) {
-      // Cinto-e-suspensório: se o back devolveu 422 chave-pix-obrigatoria
+      // cinto-e-suspensório: se o back devolveu 422 chave-pix-obrigatoria
       // (sessão local desatualizada), abre o form do mesmo jeito.
-      if (
-        e instanceof ApiError &&
-        e.problem.type === TYPE_CHAVE_PIX_OBRIGATORIA
-      ) {
+      if (e instanceof ApiError && e.problem.type === TYPE_CHAVE_PIX_OBRIGATORIA) {
         setPalpitePendente(resultadoPossivelId);
-        setErroAcao(null);
       } else {
         setErroAcao(
           e instanceof ApiError
-            ? e.problem.detail ?? e.problem.title
+            ? (e.problem.detail ?? e.problem.title)
             : "Algo deu errado. Tente de novo.",
         );
       }
     } finally {
       setAgindo(false);
     }
+  }
+
+  async function palpitar(resultadoPossivelId: number) {
+    if (!convite) return;
+    // FR-5: precisa de chave PIX antes de palpitar — guarda e mostra o form.
+    if (!sessao?.chavePix) {
+      setPalpitePendente(resultadoPossivelId);
+      return;
+    }
+    await enviarPalpite(resultadoPossivelId);
   }
 
   async function salvarChavePix() {
@@ -147,20 +140,21 @@ export default function ConvitePage({
     try {
       const novaSessao = await atualizarChavePix(chavePixForm.trim());
       setSessao(novaSessao);
-      // Se havia palpite pendente, retoma agora.
       if (palpitePendente !== null) {
-        const id = palpitePendente;
+        const idPalpite = palpitePendente;
         setPalpitePendente(null);
         setChavePixForm("");
-        await palpitar(id);
+        // chama enviarPalpite direto: a chave PIX já foi salva, não
+        // re-checa `sessao` (que ainda está desatualizado neste tick).
+        await enviarPalpite(idPalpite);
       } else {
         setChavePixForm("");
-        setFeedback("Chave PIX cadastrada!");
+        notificar("Chave PIX cadastrada!", "win");
       }
     } catch (e) {
       setErroAcao(
         e instanceof ApiError
-          ? e.problem.detail ?? e.problem.title
+          ? (e.problem.detail ?? e.problem.title)
           : "Não conseguimos salvar a chave PIX. Tente de novo.",
       );
     } finally {
@@ -170,169 +164,180 @@ export default function ConvitePage({
 
   if (estado === "carregando") {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando…</p>
       </main>
     );
   }
 
   if (estado === "erro" || !convite) {
     return (
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-        <h1 className="text-xl font-semibold">Não foi possível abrir</h1>
-        <p className="max-w-xs text-sm text-zinc-600 dark:text-zinc-400">
-          {mensagem ?? "Erro desconhecido."}
-        </p>
-        <Link
-          href="/"
-          className="min-h-[44px] flex items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-        >
+      <main className="cx-fade flex flex-col items-center gap-4 py-16 text-center">
+        <h1 className="font-display text-xl">Não foi possível abrir</h1>
+        <p className="max-w-xs text-sm text-muted">{mensagem ?? "Erro desconhecido."}</p>
+        <BotaoLink href="/" variante="primary">
           Voltar ao início
-        </Link>
+        </BotaoLink>
       </main>
     );
   }
 
+  const st = estadoVisual(convite.estado);
   const prazoFuturo = new Date(convite.prazoEntrada) > new Date();
   const podeAceitar = convite.eu.status === "convidado";
   const podePalpitar = convite.eu.status !== "convidado" && prazoFuturo;
   const palpiteAtual = convite.eu.palpiteResultadoPossivelId;
 
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
-          Convite
+    <main className="cx-fade mx-auto flex max-w-[560px] flex-col gap-4">
+      {/* cabeçalho de confronto */}
+      <Card
+        className="bg-gradient-to-br from-[#0e1a2e] to-[#0a1322] p-6 text-center"
+        acento={st.cor}
+      >
+        <p className="mb-3 text-[11px] uppercase tracking-wider text-muted">
+          Você foi convidado
         </p>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {convite.titulo}
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          {convite.ladoA} × {convite.ladoB}
-        </p>
-      </header>
+        <div className="mb-4 flex items-center justify-center gap-6">
+          <Confronto bandeira={bandeiraDe(convite.ladoA)} nome={convite.ladoA} />
+          <span className="font-display tracking-wide text-muted">VS</span>
+          <Confronto bandeira={bandeiraDe(convite.ladoB)} nome={convite.ladoB} />
+        </div>
+        <h1 className="font-display text-xl tracking-wide">{convite.titulo}</h1>
+        <div className="mt-3 flex justify-center">
+          <StatusPill label={st.label} cor={st.cor} glow={st.glow} />
+        </div>
+      </Card>
 
-      <section className="flex flex-col gap-2 text-sm">
-        <Linha k="Valor do ingresso" v={`R$ ${convite.valorIngresso}`} />
-        <Linha k="Taxa de Serviço" v={`R$ ${convite.taxaServico}`} />
-        <Linha k="Estado" v={convite.estado} />
-        <Linha k="Prazo de entrada" v={convite.prazoEntrada} />
-        <Linha k="Seu status" v={convite.eu.status} />
-      </section>
+      <Card className="p-6">
+        <div className="flex items-center justify-between border-b border-line py-2 text-[13px]">
+          <span className="text-muted">Valor do ingresso</span>
+          <span>{formatBRL(convite.valorIngresso)}</span>
+        </div>
+        <div className="flex items-center justify-between border-b border-line py-2 text-[13px]">
+          <span className="text-muted">Taxa de serviço</span>
+          <span>{formatBRL(convite.taxaServico)}</span>
+        </div>
+        <div className="flex items-center justify-between py-2 text-[13px]">
+          <span className="text-muted">Prazo de entrada</span>
+          <span>{convite.prazoEntrada}</span>
+        </div>
+      </Card>
 
-      {feedback && (
-        <p className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-          {feedback}
-        </p>
-      )}
       {erroAcao && (
-        <p
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-300"
-        >
-          {erroAcao}
-        </p>
+        <Callout tom="warn">
+          <span role="alert">{erroAcao}</span>
+        </Callout>
       )}
 
       {podeAceitar && (
-        <button
-          type="button"
-          onClick={aceitar}
-          disabled={agindo}
-          className="min-h-[48px] rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          {agindo ? "Aceitando..." : "Aceitar convite"}
-        </button>
+        <Botao variante="primary" grande bloco onClick={aceitar} disabled={agindo}>
+          <CheckCircle2 size={17} /> {agindo ? "Aceitando…" : "Aceitar convite"}
+        </Botao>
       )}
 
+      {/* form de chave PIX — quando palpitar exige */}
       {palpitePendente !== null && (
-        <section className="rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950">
-          <h2 className="text-sm font-medium text-amber-900 dark:text-amber-200">
-            Cadastre sua chave PIX
-          </h2>
-          <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
-            Pra você palpitar, a gente precisa saber pra onde mandar o prêmio
-            caso você ganhe. Pode ser CPF, e-mail, telefone ou chave aleatória
-            — e fica salvo pra todas as suas Caixinhas.
+        <Card className="flex flex-col gap-3 border-amber/30 p-6">
+          <div className="flex items-center gap-2 text-sm font-bold text-amber">
+            <ShieldCheck size={16} /> Cadastre sua chave PIX
+          </div>
+          <p className="text-xs leading-relaxed text-muted">
+            Para palpitar, a gente precisa saber para onde mandar o prêmio caso você
+            ganhe. Pode ser CPF, e-mail, telefone ou chave aleatória — fica salvo para
+            todas as suas caixinhas.
           </p>
-          <label className="mt-3 flex flex-col gap-1">
-            <span className="text-xs font-medium text-amber-900 dark:text-amber-200">
-              Sua chave PIX
-            </span>
-            <input
-              type="text"
-              value={chavePixForm}
-              onChange={(ev) => setChavePixForm(ev.target.value)}
-              placeholder="alice@exemplo.com"
+          <Campo label="Sua chave PIX">
+            <Input
               autoFocus
-              className="min-h-[44px] rounded-md border border-amber-400 bg-white px-3 text-base dark:border-amber-600 dark:bg-zinc-950"
+              value={chavePixForm}
+              onChange={(e) => setChavePixForm(e.target.value)}
+              placeholder="alice@exemplo.com"
             />
-          </label>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
+          </Campo>
+          <div className="flex gap-2">
+            <Botao
+              variante="primary"
               onClick={salvarChavePix}
               disabled={agindo || !chavePixForm.trim()}
-              className="min-h-[44px] flex-1 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="flex-1"
             >
-              {agindo ? "Salvando..." : "Salvar e palpitar"}
-            </button>
-            <button
-              type="button"
+              {agindo ? "Salvando…" : "Salvar e palpitar"}
+            </Botao>
+            <Botao
+              variante="ghost"
               onClick={() => {
                 setPalpitePendente(null);
                 setChavePixForm("");
               }}
               disabled={agindo}
-              className="min-h-[44px] flex-1 rounded-md border border-zinc-300 px-4 text-sm dark:border-zinc-700"
+              className="flex-1"
             >
               Cancelar
-            </button>
+            </Botao>
           </div>
-        </section>
+        </Card>
       )}
 
-      <section>
-        <h2 className="text-sm font-medium">Resultados Possíveis</h2>
+      {/* palpite */}
+      <Card className="p-6">
+        <div className="mb-1 flex items-center gap-2 text-sm font-bold">
+          {!prazoFuturo && <Lock size={14} className="text-muted" />}
+          Seu palpite
+        </div>
         {!prazoFuturo && (
-          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+          <p className="mb-2 text-xs text-muted">
             Palpite congelado — o prazo de entrada terminou.
+          </p>
+        )}
+        {!podePalpitar && podeAceitar && (
+          <p className="mb-2 text-xs text-muted">
+            Aceite o convite primeiro para escolher seu palpite.
           </p>
         )}
         <fieldset disabled={!podePalpitar || agindo} className="mt-2">
           <ul className="flex flex-col gap-2">
             {convite.resultadosPossiveis.map((r) => (
               <li key={r.id}>
-                <label className="flex min-h-[44px] items-center gap-3 rounded-md border border-zinc-300 p-3 dark:border-zinc-700">
+                <label
+                  className={cx(
+                    "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-xl border px-3.5 text-sm",
+                    palpiteAtual === r.id
+                      ? "border-green bg-green/[0.07]"
+                      : "border-line2 bg-bg2",
+                    (!podePalpitar || agindo) && "opacity-60",
+                  )}
+                >
                   <input
                     type="radio"
                     name="palpite"
                     value={r.id}
                     checked={palpiteAtual === r.id}
                     onChange={() => palpitar(r.id)}
-                    className="h-5 w-5"
+                    className="h-4 w-4 accent-[var(--color-green)]"
                   />
-                  <span className="text-sm">{r.rotulo}</span>
+                  {r.rotulo}
                 </label>
               </li>
             ))}
           </ul>
         </fieldset>
-        {!podePalpitar && podeAceitar && (
-          <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-            Aceite o convite primeiro para escolher seu palpite.
-          </p>
-        )}
-      </section>
+      </Card>
+
+      <BotaoLink href={`/caixinhas/${convite.caixinhaId}`} variante="ghost" bloco>
+        <Mail size={15} /> Ver a caixinha completa
+      </BotaoLink>
     </main>
   );
 }
 
-function Linha({ k, v }: { k: string; v: string }) {
+function Confronto({ bandeira, nome }: { bandeira: string; nome: string }) {
   return (
-    <div className="flex justify-between gap-3">
-      <span className="text-zinc-500">{k}</span>
-      <span className="text-right">{v}</span>
-    </div>
+    <span className="flex flex-1 flex-col items-center gap-1.5 text-center text-sm font-bold">
+      <span className="text-4xl leading-none" aria-hidden>
+        {bandeira}
+      </span>
+      <span className="line-clamp-1">{nome}</span>
+    </span>
   );
 }

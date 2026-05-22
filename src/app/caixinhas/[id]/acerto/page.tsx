@@ -1,21 +1,23 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { Trophy, Share2, Coins, AlertTriangle, Crown } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { me } from "@/lib/auth";
 import { aceitarPremio, buscarAcertoContas } from "@/lib/caixinha";
+import { formatBRL } from "@/lib/money";
+import { useToast } from "@/components/Toasts";
+import { Botao, Card, Callout, VoltarLink } from "@/components/ui";
 import type { AcertoContasResponse, ItemGanhador } from "@/types/caixinha";
 
 /**
- * Tela de Acerto de Contas — o desfecho da Caixinha (Story 4.4, FR-14).
+ * Tela de Acerto de Contas (Story 4.4 / FR-14 — redesenhada na Story 7.6 do
+ * Épico 7 para o design aprovado.
  *
- * Modo prêmio: lista cada Ganhador, valor e estado do Repasse.
- * Modo reembolso: lista cada Participante e o ingresso a estornar (Taxa
- * devolvida).
- * Modo indisponível: a Caixinha ainda não foi apurada.
- *
- * Compartilhável (share nativo / copiar resumo). Mobile-first 360×640.
+ * A LÓGICA é preservada: modo prêmio (vencedores + estado do repasse),
+ * modo reembolso (estornos), aceite do prêmio pelo vencedor logado (FR-13),
+ * compartilhamento. Tom celebratório no prêmio, não-punitivo no reembolso
+ * (NFR-6). Dinheiro via `@/lib/money` (NFR-1).
  */
 export default function AcertoContasPage({
   params,
@@ -24,12 +26,12 @@ export default function AcertoContasPage({
 }) {
   const { id } = use(params);
   const caixinhaId = parseInt(id, 10);
+  const { notificar } = useToast();
 
   const [carregando, setCarregando] = useState(true);
   const [acerto, setAcerto] = useState<AcertoContasResponse | null>(null);
   const [meuEmail, setMeuEmail] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [copiado, setCopiado] = useState(false);
   const [aceitando, setAceitando] = useState(false);
 
   const carregar = useCallback(async () => {
@@ -46,18 +48,28 @@ export default function AcertoContasPage({
       setErro(
         e instanceof ApiError
           ? (e.problem.detail ?? e.problem.title)
-          : "Erro ao carregar o Acerto de Contas.",
+          : "Erro ao carregar o acerto de contas.",
       );
     } finally {
       setCarregando(false);
     }
   }, [caixinhaId]);
 
+  useEffect(() => {
+    let cancelado = false;
+    void (async () => {
+      if (!cancelado) await carregar();
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [carregar]);
+
   async function handleAceitar() {
     if (
       !window.confirm(
-        "Aceitar o prêmio? O PIX é disparado para sua chave cadastrada e," +
-          " depois de confirmado pelo banco, é irreversível.",
+        "Aceitar o prêmio? O PIX é disparado para sua chave cadastrada e, depois de " +
+          "confirmado pelo banco, é irreversível.",
       )
     ) {
       return;
@@ -66,6 +78,7 @@ export default function AcertoContasPage({
     setErro(null);
     try {
       await aceitarPremio(caixinhaId);
+      notificar("Prêmio aceito! O PIX está a caminho.", "win");
       await carregar();
     } catch (e) {
       setErro(
@@ -78,30 +91,20 @@ export default function AcertoContasPage({
     }
   }
 
-  useEffect(() => {
-    let cancelado = false;
-    void (async () => {
-      if (!cancelado) await carregar();
-    })();
-    return () => {
-      cancelado = true;
-    };
-  }, [carregar]);
-
   function resumoTexto(a: AcertoContasResponse): string {
     if (a.modo === "premio") {
       const linhas = a.ganhadores.map(
-        (g) => `• ${g.email}: R$ ${g.valor} (${rotuloRepasse(g.estadoRepasse)})`,
+        (g) => `• ${g.email}: ${formatBRL(g.valor)} (${rotuloRepasse(g.estadoRepasse)})`,
       );
-      return `🏆 Acerto de Contas\n${linhas.join("\n")}\nTaxa: R$ ${a.taxaServico}`;
+      return `🏆 Acerto de Contas\n${linhas.join("\n")}\nTaxa: ${formatBRL(a.taxaServico)}`;
     }
     if (a.modo === "reembolso") {
       const linhas = a.reembolsos.map(
-        (r) => `• ${r.email}: R$ ${r.valorEstorno} de volta`,
+        (r) => `• ${r.email}: ${formatBRL(r.valorEstorno)} de volta`,
       );
       return `Ninguém cravou — reembolso total:\n${linhas.join("\n")}`;
     }
-    return "A Caixinha ainda não foi apurada.";
+    return "A caixinha ainda não foi apurada.";
   }
 
   async function compartilhar() {
@@ -112,184 +115,166 @@ export default function AcertoContasPage({
         await navigator.share({ text: texto });
         return;
       } catch {
-        // usuário cancelou o share — cai no copiar.
+        // usuário cancelou o share — cai no copiar
       }
     }
     try {
       await navigator.clipboard.writeText(texto);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2000);
+      notificar("Resumo copiado!", "mail");
     } catch {
-      // clipboard pode falhar; sem ação.
+      // clipboard pode falhar; sem ação
     }
   }
 
   if (carregando) {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando…</p>
       </main>
     );
   }
 
   if (!acerto) {
     return (
-      <main className="flex flex-1 flex-col gap-4 p-6">
-        <p role="alert" className="text-sm text-red-700">
-          {erro ?? "Acerto de Contas indisponível."}
-        </p>
-        <Link href={`/caixinhas/${caixinhaId}`} className="text-sm text-zinc-500 underline">
-          Voltar
-        </Link>
+      <main className="cx-fade flex flex-col gap-4">
+        <Callout tom="warn">
+          <span role="alert">{erro ?? "Acerto de contas indisponível."}</span>
+        </Callout>
+        <VoltarLink href={`/caixinhas/${caixinhaId}`}>Voltar</VoltarLink>
       </main>
     );
   }
 
+  const ehPremio = acerto.modo === "premio";
+  const ehReembolso = acerto.modo === "reembolso";
+  const meuPremio = ehPremio ? acerto.ganhadores.find((g) => g.email === meuEmail) : undefined;
+  const podeAceitar =
+    !!meuPremio &&
+    (meuPremio.estadoRepasse === "aguardando_aceite" ||
+      meuPremio.estadoRepasse === "falha_pix");
+
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
-          Acerto de Contas
-        </p>
-        <h1 className="text-xl font-semibold tracking-tight">
-          {acerto.modo === "premio" && "🏆 Resultado"}
-          {acerto.modo === "reembolso" && "Reembolso"}
+    <main className="cx-fade mx-auto flex max-w-[560px] flex-col gap-4">
+      <VoltarLink href={`/caixinhas/${caixinhaId}`}>Voltar para a caixinha</VoltarLink>
+
+      {/* cabeçalho de desfecho */}
+      <Card className="flex flex-col items-center gap-3 p-7 text-center">
+        <span
+          className={
+            "grid h-16 w-16 place-items-center rounded-2xl " +
+            (ehPremio ? "bg-gold/15 text-gold" : ehReembolso ? "bg-blue/15 text-blue" : "bg-surface text-muted")
+          }
+        >
+          {ehPremio ? <Trophy size={30} /> : ehReembolso ? <Coins size={30} /> : <AlertTriangle size={30} />}
+        </span>
+        <h1 className="font-display text-2xl tracking-wide">
+          {ehPremio && "Temos vencedores!"}
+          {ehReembolso && "Reembolso total"}
           {acerto.modo === "indisponivel" && "Ainda não apurada"}
-          {acerto.modo === "cancelada_sem_reembolso" && "Caixinha cancelada"}
+          {acerto.modo !== "premio" &&
+            acerto.modo !== "reembolso" &&
+            acerto.modo !== "indisponivel" &&
+            "Caixinha cancelada"}
         </h1>
-      </header>
-
-      {acerto.modo === "indisponivel" && (
-        <p className="rounded-md border border-zinc-300 bg-zinc-50 p-3 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-          Esta Caixinha está em <strong>{acerto.estadoCaixinha}</strong> — o
-          Acerto de Contas aparece quando ela for apurada.
-        </p>
-      )}
-
-      {acerto.modo === "cancelada_sem_reembolso" && (
-        <p className="rounded-md border border-zinc-300 bg-zinc-50 p-3 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-          Esta caixinha foi cancelada. Como ninguém chegou a pagar o
-          ingresso, não há nada a reembolsar.
-        </p>
-      )}
-
-      {acerto.modo === "premio" && (
-        <>
-          <p className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-            💰 {acerto.ganhadores.length} Ganhador(es)! Cada um pode entrar no
-            app para receber o prêmio.
+        {ehPremio && (
+          <p className="text-sm text-muted">
+            {acerto.ganhadores.length} ganhador(es). Total custodiado{" "}
+            {formatBRL(acerto.totalCustodiado)} · taxa retida {formatBRL(acerto.taxaServico)}.
           </p>
+        )}
+        {ehReembolso && (
+          <p className="text-sm text-muted">
+            Ninguém cravou o resultado — o dinheiro de todo mundo volta, taxa inclusa.
+          </p>
+        )}
+        {acerto.modo === "indisponivel" && (
+          <p className="text-sm text-muted">
+            Esta caixinha está em <b>{acerto.estadoCaixinha}</b> — o acerto aparece quando
+            ela for apurada.
+          </p>
+        )}
+      </Card>
 
-          {/* Card de aceite — Story 4.6: visível se o usuário logado é um
-              Ganhador aguardando aceite (ou após falha de PIX). */}
-          {(() => {
-            const eu = acerto.ganhadores.find((g) => g.email === meuEmail);
-            if (
-              !eu ||
-              (eu.estadoRepasse !== "aguardando_aceite" &&
-                eu.estadoRepasse !== "falha_pix")
-            ) {
-              return null;
-            }
-            return (
-              <section className="flex flex-col gap-3 rounded-md border border-emerald-400 bg-emerald-50 p-4 dark:border-emerald-600 dark:bg-emerald-950">
-                <h2 className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
-                  Você ganhou R$ {eu.valor}!
-                </h2>
-                {eu.estadoRepasse === "falha_pix" && (
-                  <p className="text-xs text-red-700 dark:text-red-300">
-                    Não conseguimos enviar o PIX — confira sua chave PIX no
-                    perfil e tente aceitar de novo.
-                  </p>
-                )}
-                <p className="text-xs text-emerald-800 dark:text-emerald-300">
-                  O prêmio vai para a chave PIX cadastrada no seu perfil. Ao
-                  aceitar, o PIX é disparado imediatamente e, após confirmado
-                  pelo banco, é irreversível.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleAceitar}
-                  disabled={aceitando}
-                  className="min-h-[48px] rounded-md bg-emerald-600 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-emerald-500"
-                >
-                  {aceitando ? "Processando..." : "Aceitar e receber o prêmio"}
-                </button>
-                <Link
-                  href={`/caixinhas/${caixinhaId}/pagamento`}
-                  className="text-center text-xs text-emerald-700 underline dark:text-emerald-400"
-                >
-                  Conferir / atualizar minha chave PIX
-                </Link>
-              </section>
-            );
-          })()}
-          <ul className="flex flex-col gap-2">
+      {erro && (
+        <Callout tom="warn">
+          <span role="alert">{erro}</span>
+        </Callout>
+      )}
+
+      {/* card de aceite — vencedor logado aguardando aceite (Story 4.6) */}
+      {meuPremio && podeAceitar && (
+        <Card className="flex flex-col gap-3 border-green/35 p-6">
+          <div className="flex items-center gap-2 text-sm font-bold text-green">
+            <Crown size={16} /> Você ganhou {formatBRL(meuPremio.valor)}!
+          </div>
+          {meuPremio.estadoRepasse === "falha_pix" && (
+            <p className="text-xs text-red">
+              Não conseguimos enviar o PIX — confira sua chave PIX no perfil de pagamento e
+              tente aceitar de novo.
+            </p>
+          )}
+          <p className="text-xs leading-relaxed text-muted">
+            O prêmio vai para a chave PIX cadastrada no seu perfil. Ao aceitar, o PIX é
+            disparado imediatamente e, após confirmado pelo banco, é irreversível.
+          </p>
+          <Botao variante="primary" bloco onClick={handleAceitar} disabled={aceitando}>
+            <Trophy size={16} /> {aceitando ? "Processando…" : "Aceitar e receber o prêmio"}
+          </Botao>
+        </Card>
+      )}
+
+      {/* lista de ganhadores */}
+      {ehPremio && (
+        <Card className="p-6">
+          <div className="mb-3 text-sm font-bold">Ganhadores</div>
+          <ul className="flex flex-col gap-2.5">
             {acerto.ganhadores.map((g: ItemGanhador) => (
               <li
                 key={g.email}
-                className="flex flex-col gap-1 rounded-md border border-zinc-200 p-3 dark:border-zinc-800"
+                className="flex flex-col gap-1.5 rounded-xl border border-line bg-bg2 p-3.5"
               >
-                <div className="flex justify-between gap-2">
-                  <span className="truncate text-sm">{g.email}</span>
-                  <strong className="text-sm">R$ {g.valor}</strong>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[13.5px] font-semibold">{g.email}</span>
+                  <b className="font-display text-base text-gold">{formatBRL(g.valor)}</b>
                 </div>
                 <RepasseBadge estado={g.estadoRepasse} />
                 {g.comprovante && (
-                  <span className="text-xs text-zinc-500">
-                    Comprovante: {g.comprovante}
-                  </span>
+                  <span className="text-[11px] text-muted">Comprovante: {g.comprovante}</span>
                 )}
               </li>
             ))}
           </ul>
-          <p className="text-xs text-zinc-500">
-            Taxa de Serviço retida: R$ {acerto.taxaServico} · Total custodiado:
-            R$ {acerto.totalCustodiado}
-          </p>
-        </>
+        </Card>
       )}
 
-      {acerto.modo === "reembolso" && (
-        <>
-          <p className="rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-300">
-            O dinheiro de todo mundo volta automaticamente, taxa inclusa.
-          </p>
-          <ul className="flex flex-col gap-2">
+      {/* lista de reembolsos */}
+      {ehReembolso && (
+        <Card className="p-6">
+          <div className="mb-3 text-sm font-bold">Reembolsos</div>
+          <ul className="flex flex-col gap-2.5">
             {acerto.reembolsos.map((r) => (
               <li
                 key={r.email}
-                className="flex flex-col gap-1 rounded-md border border-zinc-200 p-3 dark:border-zinc-800"
+                className="flex flex-col gap-1.5 rounded-xl border border-line bg-bg2 p-3.5"
               >
-                <div className="flex justify-between gap-2">
-                  <span className="truncate text-sm">{r.email}</span>
-                  <strong className="text-sm">R$ {r.valorEstorno}</strong>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[13.5px] font-semibold">{r.email}</span>
+                  <b className="font-display text-base text-blue">
+                    {formatBRL(r.valorEstorno)}
+                  </b>
                 </div>
-                {/* Story 5.2: estado real do estorno — o app nunca diz
-                    "reembolsado" antes de o Provedor confirmar. */}
                 <EstornoBadge estado={r.estadoEstorno} />
               </li>
             ))}
           </ul>
-        </>
+        </Card>
       )}
 
-      {(acerto.modo === "premio" || acerto.modo === "reembolso") && (
-        <button
-          type="button"
-          onClick={compartilhar}
-          className="min-h-[48px] rounded-md border border-zinc-400 px-4 text-sm font-medium dark:border-zinc-600"
-        >
-          {copiado ? "Resumo copiado!" : "Compartilhar resultado"}
-        </button>
+      {(ehPremio || ehReembolso) && (
+        <Botao variante="ghost" bloco onClick={compartilhar}>
+          <Share2 size={15} /> Compartilhar resultado
+        </Botao>
       )}
-
-      <Link
-        href={`/caixinhas/${caixinhaId}`}
-        className="mt-2 text-center text-sm text-zinc-500 underline"
-      >
-        Voltar para a Caixinha
-      </Link>
     </main>
   );
 }
@@ -306,18 +291,15 @@ function rotuloRepasse(estado: string): string {
 
 /** Badge do estado do Repasse de um Ganhador (Story 4.4, AC-3). */
 function RepasseBadge({ estado }: { estado: string }) {
-  const mapa: Record<string, string> = {
-    aguardando_aceite:
-      "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-    pix_em_andamento:
-      "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-    pago: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-    falha_pix: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+  const cores: Record<string, string> = {
+    aguardando_aceite: "bg-amber/15 text-amber",
+    pix_em_andamento: "bg-blue/15 text-blue",
+    pago: "bg-green/15 text-green",
+    falha_pix: "bg-red/15 text-red",
   };
-  const classe = mapa[estado] ?? "bg-zinc-100 text-zinc-600";
   return (
     <span
-      className={`w-fit rounded-full px-2 py-0.5 text-xs font-medium ${classe}`}
+      className={`w-fit rounded-full px-2.5 py-0.5 text-[11px] font-bold ${cores[estado] ?? "bg-surface text-muted"}`}
     >
       {rotuloRepasse(estado)}
     </span>
@@ -325,22 +307,19 @@ function RepasseBadge({ estado }: { estado: string }) {
 }
 
 /**
- * Badge do estado do estorno de um Participante (Story 5.2).
- *
- * O app nunca afirma "reembolsado" antes de o Provedor confirmar — o
- * estado vem do `EstadoCobranca` real.
+ * Badge do estado do estorno (Story 5.2). O app nunca afirma "reembolsado"
+ * antes de o Provedor confirmar.
  */
 function EstornoBadge({ estado }: { estado: string | null }) {
   if (estado === "concluido") {
     return (
-      <span className="w-fit rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+      <span className="w-fit rounded-full bg-green/15 px-2.5 py-0.5 text-[11px] font-bold text-green">
         reembolsado ✓
       </span>
     );
   }
-  // null ou em_processamento — estorno ainda não confirmado pelo banco.
   return (
-    <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+    <span className="w-fit rounded-full bg-amber/15 px-2.5 py-0.5 text-[11px] font-bold text-amber">
       estorno em processamento
     </span>
   );

@@ -1,26 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Coins, Trophy, Users, Flag, Sparkles, Zap, ChevronRight } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { listarCaixinhas } from "@/lib/caixinha";
+import { Decimal, formatBRL } from "@/lib/money";
+import { estadoVisual, isEstadoTerminal, bandeiraDe } from "@/lib/ui";
+import { BotaoLink, Card, StatusPill, Pill } from "@/components/ui";
 import type { CaixinhaResumoResponse } from "@/types/caixinha";
 
 /**
- * Dashboard — as Caixinhas do Usuário (Story 6.1, FR-17).
+ * Dashboard — as Caixinhas do Usuário (Story 6.1 / FR-17, redesenhado na
+ * Story 7.3 do Épico 7 para o design aprovado: hero, faixa de stats e grid
+ * de cards de confronto.
  *
- * Lista cada Caixinha das quais o Usuário participa, com Estado,
- * progresso (pagos / mínimo) e Prêmio potencial.
+ * Decisão registrada (Épico 7): o stat de GMV custodiado ("Em jogo nas
+ * caixinhas") é MANTIDO conforme o design aprovado — sobrescreve o guardrail
+ * anti-glamour do PRD §10/§14 por decisão explícita de produto.
  *
- * <p>Anti-glamour (PRD §10/§14): NÃO há hero-stat de "R$ em jogo" — só a
- * contagem de Caixinhas ativas. Não parece casa de aposta.
- *
+ * Dinheiro 100% via `@/lib/money` (Decimal), nunca `Number` (NFR-1).
  * Mobile-first 360×640, sem scroll horizontal (NFR-3).
  */
 export default function Dashboard() {
-  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">(
-    "carregando",
-  );
+  const [estado, setEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [caixinhas, setCaixinhas] = useState<CaixinhaResumoResponse[]>([]);
   const [mensagem, setMensagem] = useState<string | null>(null);
 
@@ -49,130 +52,205 @@ export default function Dashboard() {
     };
   }, [carregar]);
 
+  // Agregados — soma de GMV via Decimal (NFR-1), nunca `+` em number.
+  const { totalEmJogo, ativas } = useMemo(() => {
+    const total = caixinhas.reduce(
+      (acc, c) => acc.plus(new Decimal(c.premioPotencial)),
+      new Decimal(0),
+    );
+    return {
+      totalEmJogo: total,
+      ativas: caixinhas.filter((c) => !isEstadoTerminal(c.estado)).length,
+    };
+  }, [caixinhas]);
+
   if (estado === "carregando") {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando suas caixinhas…</p>
       </main>
     );
   }
 
   if (estado === "erro") {
     return (
-      <main className="flex flex-1 flex-col gap-4 p-6">
-        <p role="alert" className="text-sm text-red-700">
-          {mensagem}
-        </p>
+      <main>
+        <Card className="border-red/30 bg-red/[0.06]">
+          <p role="alert" className="text-sm text-red">
+            {mensagem}
+          </p>
+        </Card>
       </main>
     );
   }
 
-  const ativas = caixinhas.filter((c) => c.ativa).length;
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Suas caixinhas
-        </h1>
-        {caixinhas.length > 0 && (
-          <p className="text-sm text-zinc-500">
-            {ativas} {ativas === 1 ? "caixinha ativa" : "caixinhas ativas"}
+    <main className="cx-fade flex flex-col gap-7">
+      {/* ---------------- Hero ---------------- */}
+      <section className="relative overflow-hidden rounded-[24px] border border-line bg-gradient-to-br from-[#0e1a2e] to-[#0a1322] px-6 py-10 sm:px-10 sm:py-12">
+        <div
+          className="pointer-events-none absolute -right-24 -top-28 h-[420px] w-[420px] rounded-full"
+          style={{
+            background: "radial-gradient(circle,rgba(31,224,116,0.28),transparent 65%)",
+            filter: "blur(12px)",
+          }}
+          aria-hidden
+        />
+        <div className="relative max-w-[600px]">
+          <Pill>
+            <Sparkles size={13} /> COPA DO MUNDO 2026
+          </Pill>
+          <h1 className="mt-4 font-display text-[34px] leading-[1.05] tracking-wide sm:text-[46px]">
+            Crie sua caixinha.
+            <br />
+            <span className="text-green">Chame a galera.</span>
+          </h1>
+          <p className="mb-6 mt-3 max-w-[520px] text-[15px] leading-relaxed text-muted">
+            Aposte jogo a jogo com os amigos. Quem cravar o resultado leva o bolo —
+            dividido igualmente entre todos que acertarem.
           </p>
+          <BotaoLink href="/caixinhas/nova" variante="primary" grande>
+            <Zap size={18} /> Criar caixinha agora
+          </BotaoLink>
+        </div>
+      </section>
+
+      {/* ---------------- Stats ---------------- */}
+      <section className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+        <Stat
+          icone={<Coins size={18} />}
+          rotulo="Em jogo nas caixinhas"
+          valor={formatBRL(totalEmJogo)}
+          acento="text-gold bg-gold/15"
+        />
+        <Stat
+          icone={<Trophy size={18} />}
+          rotulo="Caixinhas ativas"
+          valor={String(ativas)}
+          acento="text-green bg-green/15"
+        />
+        <Stat
+          icone={<Users size={18} />}
+          rotulo="Total de caixinhas"
+          valor={String(caixinhas.length)}
+          acento="text-blue bg-blue/15"
+        />
+      </section>
+
+      {/* ---------------- Grid de caixinhas ---------------- */}
+      <section>
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg tracking-wide">
+          <Flag size={16} className="text-green" /> Minhas caixinhas
+        </h2>
+
+        {caixinhas.length === 0 ? (
+          <Card className="flex flex-col items-center gap-4 py-10 text-center">
+            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-green/15 text-green">
+              <Trophy size={26} />
+            </span>
+            <p className="max-w-[360px] text-sm text-muted">
+              Você ainda não participa de nenhuma caixinha. Que tal criar a primeira e
+              chamar a galera?
+            </p>
+            <BotaoLink href="/caixinhas/nova" variante="primary">
+              <Zap size={16} /> Criar minha primeira caixinha
+            </BotaoLink>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(310px,1fr))]">
+            {caixinhas.map((c) => (
+              <CaixinhaCard key={c.id} c={c} />
+            ))}
+          </div>
         )}
-      </header>
-
-      {caixinhas.length === 0 ? (
-        <section className="flex flex-col items-center gap-3 rounded-md border border-zinc-200 p-6 text-center dark:border-zinc-800">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Você ainda não participa de nenhuma caixinha. Que tal criar a
-            primeira e chamar a galera?
-          </p>
-        </section>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {caixinhas.map((c) => (
-            <li key={c.id}>
-              <Link
-                href={`/caixinhas/${c.id}`}
-                className="flex flex-col gap-2 rounded-md border border-zinc-200 p-4 dark:border-zinc-800"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{c.titulo}</p>
-                    <p className="truncate text-xs text-zinc-500">
-                      {c.confronto}
-                    </p>
-                  </div>
-                  <EstadoBadge estado={c.estado} />
-                </div>
-                <div className="flex justify-between text-xs text-zinc-600 dark:text-zinc-400">
-                  <span>
-                    {c.pagosConfirmados}/{c.minimoParticipantes} pagaram
-                  </span>
-                  <span>Prêmio potencial: R$ {c.premioPotencial}</span>
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <Link
-        href="/caixinhas/nova"
-        className="flex min-h-[48px] items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-      >
-        Criar nova caixinha
-      </Link>
+      </section>
     </main>
   );
 }
 
-/** Badge do Estado da Caixinha — rótulo amigável (Story 6.1). */
-function EstadoBadge({ estado }: { estado: string }) {
-  const mapa: Record<string, { texto: string; classe: string }> = {
-    coletando_convites: {
-      texto: "convidando",
-      classe: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-    },
-    coletando_pagamentos: {
-      texto: "coletando",
-      classe:
-        "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-    },
-    formada: {
-      texto: "formada",
-      classe: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-    },
-    apurada: {
-      texto: "apurada",
-      classe:
-        "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
-    },
-    repasse_parcial: {
-      texto: "repassando",
-      classe:
-        "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
-    },
-    repassada: {
-      texto: "repassada ✓",
-      classe:
-        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-    },
-    cancelada: {
-      texto: "cancelada",
-      classe: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-    },
-  };
-  const info = mapa[estado] ?? {
-    texto: estado,
-    classe: "bg-zinc-100 text-zinc-600",
-  };
+/* ----------------------------------------------------------------------- */
+/* Stat — card de estatística do dashboard.                                */
+/* ----------------------------------------------------------------------- */
+function Stat({
+  icone,
+  rotulo,
+  valor,
+  acento,
+}: {
+  icone: React.ReactNode;
+  rotulo: string;
+  valor: string;
+  acento: string;
+}) {
   return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${info.classe}`}
+    <div className="flex items-center gap-3.5 rounded-2xl border border-line bg-card px-5 py-4">
+      <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${acento}`}>
+        {icone}
+      </span>
+      <div className="min-w-0">
+        <div className="truncate font-display text-2xl tracking-wide">{valor}</div>
+        <div className="mt-0.5 text-xs text-muted">{rotulo}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+/* CaixinhaCard — card de confronto clicável no grid.                      */
+/* ----------------------------------------------------------------------- */
+function CaixinhaCard({ c }: { c: CaixinhaResumoResponse }) {
+  const st = estadoVisual(c.estado);
+  // `confronto` chega como "Lado A × Lado B" — separa para as bandeiras.
+  const [ladoA, ladoB] = c.confronto.split(/\s*[×x]\s*/);
+  const pct = c.minimoParticipantes
+    ? Math.min(100, (c.pagosConfirmados / c.minimoParticipantes) * 100)
+    : 0;
+
+  return (
+    <Link
+      href={`/caixinhas/${c.id}`}
+      className="group relative overflow-hidden rounded-[18px] border border-line bg-card p-5 transition hover:-translate-y-1 hover:shadow-[0_16px_36px_rgba(0,0,0,0.4)]"
+      style={{ borderTopColor: st.cor, borderTopWidth: 3 }}
     >
-      {info.texto}
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <StatusPill label={st.label} cor={st.cor} glow={st.glow} />
+        <ChevronRight size={18} className="text-muted" />
+      </div>
+
+      <div className="mb-3 flex items-center justify-center gap-4">
+        <Confronto bandeira={bandeiraDe(ladoA)} nome={ladoA ?? "—"} />
+        <span className="font-display text-[15px] tracking-wide text-muted">VS</span>
+        <Confronto bandeira={bandeiraDe(ladoB)} nome={ladoB ?? "—"} />
+      </div>
+
+      <div className="mb-3.5 text-center text-[13px] text-muted">{c.titulo}</div>
+
+      <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-surface">
+        <div
+          className="h-full rounded-full transition-[width]"
+          style={{ width: `${pct}%`, background: st.cor }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between text-[12.5px] text-muted">
+        <span className="flex items-center gap-1.5">
+          <Users size={13} /> {c.pagosConfirmados}/{c.minimoParticipantes} pagos
+        </span>
+        <span className="font-display text-base tracking-wide text-gold">
+          {formatBRL(c.premioPotencial)}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+function Confronto({ bandeira, nome }: { bandeira: string; nome: string }) {
+  return (
+    <span className="flex flex-1 flex-col items-center gap-1.5 text-center text-sm font-bold">
+      <span className="text-3xl leading-none" aria-hidden>
+        {bandeira}
+      </span>
+      <span className="line-clamp-1">{nome}</span>
     </span>
   );
 }

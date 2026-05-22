@@ -1,30 +1,22 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Crown, AlertTriangle, Trophy } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { apurarCaixinha, buscarCaixinha } from "@/lib/caixinha";
-import type {
-  CaixinhaResponse,
-  CandidatoGanhador,
-  ResultadoResponse,
-} from "@/types/caixinha";
+import { useToast } from "@/components/Toasts";
+import { Botao, Card, Callout, VoltarLink, cx } from "@/components/ui";
+import type { CaixinhaResponse, CandidatoGanhador, ResultadoResponse } from "@/types/caixinha";
 
 /**
- * Tela de apuração da Caixinha (Story 4.2, FR-12).
+ * Tela de apuração (Story 4.2 / FR-12 — redesenhada na Story 7.6 do Épico 7).
  *
- * Fluxo em até 2 passos:
- *  1. O Organizador escolhe o Resultado Final entre os Resultados Possíveis.
- *  2. Se o backend responder 422 com `candidatos` (mais palpiteiros corretos
- *     que o Nº de Ganhadores), o Organizador escolhe exatamente Nº de
- *     Ganhadores entre eles e reenvia.
+ * A LÓGICA é preservada: passo 1 escolhe o Resultado Final; se o backend
+ * responder 422 com `candidatos`, passo 2 escolhe Nº de Ganhadores entre
+ * eles. A tela declara a responsabilidade do Organizador e a
+ * irreversibilidade do repasse antes de confirmar (AC-4).
  *
- * Confirmação reforçada (AC-4): a tela declara que a apuração e a seleção
- * de Ganhadores são responsabilidade do Organizador e que o Repasse é
- * irreversível após o aceite de cada Ganhador.
- *
- * Acesso: só o Organizador. Não-Organizador recebe 403/404 do backend.
  * Mobile-first 360×640 (NFR-3).
  */
 export default function ApuracaoPage({
@@ -35,6 +27,7 @@ export default function ApuracaoPage({
   const { id } = use(params);
   const caixinhaId = parseInt(id, 10);
   const router = useRouter();
+  const { notificar } = useToast();
 
   const [carregando, setCarregando] = useState(true);
   const [caixinha, setCaixinha] = useState<CaixinhaResponse | null>(null);
@@ -42,7 +35,6 @@ export default function ApuracaoPage({
   const [agindo, setAgindo] = useState(false);
 
   const [resultadoFinalId, setResultadoFinalId] = useState<number | null>(null);
-  // Preenchido quando o backend pede seleção (mais corretos que vagas).
   const [candidatos, setCandidatos] = useState<CandidatoGanhador[] | null>(null);
   const [escolhidos, setEscolhidos] = useState<Set<number>>(new Set());
 
@@ -75,11 +67,8 @@ export default function ApuracaoPage({
   function alternarEscolhido(participanteId: number) {
     setEscolhidos((atual) => {
       const proximo = new Set(atual);
-      if (proximo.has(participanteId)) {
-        proximo.delete(participanteId);
-      } else {
-        proximo.add(participanteId);
-      }
+      if (proximo.has(participanteId)) proximo.delete(participanteId);
+      else proximo.add(participanteId);
       return proximo;
     });
   }
@@ -91,27 +80,28 @@ export default function ApuracaoPage({
     try {
       const r = await apurarCaixinha(caixinhaId, {
         resultadoFinalId,
-        ganhadoresEscolhidos:
-          candidatos != null ? Array.from(escolhidos) : undefined,
+        ganhadoresEscolhidos: candidatos != null ? Array.from(escolhidos) : undefined,
       });
-      // Sucesso — vai para o Acerto de Contas (Story 4.4).
-      router.push(`/caixinhas/${caixinhaId}?apurada=${r.modoReembolso ? "reembolso" : "premio"}`);
+      notificar(
+        r.modoReembolso
+          ? "Apurada — ninguém cravou. Reembolso a caminho."
+          : "Caixinha apurada! Prêmio a caminho dos vencedores.",
+        "win",
+      );
+      router.push(`/caixinhas/${caixinhaId}/acerto`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 422) {
-        // Caso "mais corretos que vagas": o problem+json traz `candidatos`.
         const lista = e.problem["candidatos"] as CandidatoGanhador[] | undefined;
         if (lista && lista.length > 0) {
           setCandidatos(lista);
           setEscolhidos(new Set());
-          setErro(e.problem.detail ?? e.problem.title);
-        } else {
-          setErro(e.problem.detail ?? e.problem.title);
         }
+        setErro(e.problem.detail ?? e.problem.title);
       } else {
         setErro(
           e instanceof ApiError
             ? (e.problem.detail ?? e.problem.title)
-            : "Não conseguimos apurar a Caixinha. Tente de novo.",
+            : "Não conseguimos apurar a caixinha. Tente de novo.",
         );
       }
     } finally {
@@ -121,21 +111,19 @@ export default function ApuracaoPage({
 
   if (carregando) {
     return (
-      <main className="flex flex-1 items-center justify-center p-6">
-        <p>Carregando...</p>
+      <main className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-muted">Carregando…</p>
       </main>
     );
   }
 
   if (!caixinha) {
     return (
-      <main className="flex flex-1 flex-col gap-4 p-6">
-        <p role="alert" className="text-sm text-red-700">
-          {erro ?? "Caixinha não encontrada."}
-        </p>
-        <Link href="/" className="text-sm text-zinc-500 underline">
-          Voltar
-        </Link>
+      <main className="cx-fade flex flex-col gap-4">
+        <Callout tom="warn">
+          <span role="alert">{erro ?? "Caixinha não encontrada."}</span>
+        </Callout>
+        <VoltarLink href="/">Voltar</VoltarLink>
       </main>
     );
   }
@@ -145,47 +133,42 @@ export default function ApuracaoPage({
   const selecaoCompleta = escolhidos.size === numeroGanhadores;
 
   return (
-    <main className="flex flex-1 flex-col gap-4 p-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-zinc-500">
+    <main className="cx-fade mx-auto flex max-w-[560px] flex-col gap-4">
+      <VoltarLink href={`/caixinhas/${caixinhaId}`}>Voltar para a caixinha</VoltarLink>
+
+      <div>
+        <p className="text-[11px] uppercase tracking-wider text-muted">
           Apuração — {caixinha.titulo}
         </p>
-        <h1 className="text-xl font-semibold tracking-tight">
-          Apurar o Resultado Final
-        </h1>
-      </header>
+        <h1 className="font-display text-[26px] tracking-wide">Apurar o resultado</h1>
+      </div>
 
       {erro && (
-        <p
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-300"
-        >
-          {erro}
-        </p>
+        <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+          <span role="alert">{erro}</span>
+        </Callout>
       )}
 
-      {naoFormada && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
-          Esta Caixinha está em <strong>{caixinha.estado}</strong> — só é
-          possível apurar uma Caixinha <strong>formada</strong>.
-        </p>
-      )}
-
-      {!naoFormada && (
+      {naoFormada ? (
+        <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+          Esta caixinha está em <b>{caixinha.estado}</b> — só é possível apurar uma
+          caixinha <b>formada</b>.
+        </Callout>
+      ) : (
         <>
-          {/* Passo 1 — Resultado Final. */}
-          <section className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium">
-              1. Qual foi o resultado?
-            </h2>
-            <fieldset
-              disabled={candidatos != null}
-              className="flex flex-col gap-2"
-            >
+          {/* passo 1 — resultado final */}
+          <Card className="p-6">
+            <h2 className="mb-3 text-sm font-bold">1. Qual foi o resultado?</h2>
+            <fieldset disabled={candidatos != null} className="flex flex-col gap-2">
               {caixinha.resultadosPossiveis.map((r: ResultadoResponse) => (
                 <label
                   key={r.id}
-                  className="flex min-h-[44px] items-center gap-3 rounded-md border border-zinc-300 px-3 dark:border-zinc-700"
+                  className={cx(
+                    "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-xl border px-3.5 text-sm",
+                    resultadoFinalId === r.id
+                      ? "border-green bg-green/[0.07]"
+                      : "border-line2 bg-bg2",
+                  )}
                 >
                   <input
                     type="radio"
@@ -193,84 +176,73 @@ export default function ApuracaoPage({
                     value={r.id}
                     checked={resultadoFinalId === r.id}
                     onChange={() => setResultadoFinalId(r.id)}
+                    className="h-4 w-4 accent-[var(--color-green)]"
                   />
-                  <span className="text-sm">{r.rotulo}</span>
+                  {r.rotulo}
                 </label>
               ))}
             </fieldset>
-          </section>
+          </Card>
 
-          {/* Passo 2 — seleção de Ganhadores (só quando o back pede). */}
+          {/* passo 2 — seleção de ganhadores (só quando o back pede) */}
           {candidatos != null && (
-            <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium">
-                2. Escolha {numeroGanhadores} Ganhador(es)
+            <Card className="p-6">
+              <h2 className="mb-1 text-sm font-bold">
+                2. Escolha {numeroGanhadores} ganhador(es)
               </h2>
-              <p className="text-xs text-zinc-500">
-                Há {candidatos.length} palpiteiros corretos para{" "}
-                {numeroGanhadores} vaga(s). Selecione exatamente{" "}
-                {numeroGanhadores}.
+              <p className="mb-3 text-xs text-muted">
+                Há {candidatos.length} palpiteiros corretos para {numeroGanhadores}{" "}
+                vaga(s). Selecione exatamente {numeroGanhadores} —{" "}
+                {escolhidos.size} de {numeroGanhadores} marcado(s).
               </p>
               <div className="flex flex-col gap-2">
                 {candidatos.map((c) => (
                   <label
                     key={c.participanteId}
-                    className="flex min-h-[44px] items-center gap-3 rounded-md border border-zinc-300 px-3 dark:border-zinc-700"
+                    className={cx(
+                      "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-xl border px-3.5 text-sm",
+                      escolhidos.has(c.participanteId)
+                        ? "border-green bg-green/[0.07]"
+                        : "border-line2 bg-bg2",
+                    )}
                   >
                     <input
                       type="checkbox"
                       checked={escolhidos.has(c.participanteId)}
                       onChange={() => alternarEscolhido(c.participanteId)}
+                      className="h-4 w-4 accent-[var(--color-green)]"
                     />
-                    <span className="truncate text-sm">{c.email}</span>
+                    <span className="truncate">{c.email}</span>
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-zinc-500">
-                {escolhidos.size} de {numeroGanhadores} selecionado(s).
-              </p>
-            </section>
+            </Card>
           )}
 
-          {/* Confirmação reforçada (AC-4). */}
-          <section className="rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
-            <p className="font-medium">Antes de confirmar, atenção:</p>
-            <ul className="mt-1 list-disc pl-4">
-              <li>
-                A apuração e a escolha dos Ganhadores são responsabilidade
-                sua, como Organizador.
-              </li>
-              <li>
-                Depois de apurada, o Resultado Final é <strong>imutável</strong>.
-              </li>
-              <li>
-                Cada Repasse é <strong>irreversível</strong> assim que o
-                Ganhador aceitar receber o prêmio.
-              </li>
+          {/* confirmação reforçada (AC-4) */}
+          <Callout tom="warn" icone={<AlertTriangle size={18} />}>
+            <b>Antes de confirmar, atenção:</b>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              <li>A apuração e a escolha dos ganhadores são responsabilidade sua.</li>
+              <li>Depois de apurada, o resultado final é imutável.</li>
+              <li>Cada repasse é irreversível assim que o ganhador aceitar o prêmio.</li>
             </ul>
-          </section>
+          </Callout>
 
-          <button
-            type="button"
+          <Botao
+            variante="primary"
+            grande
+            bloco
             onClick={apurar}
             disabled={
-              agindo ||
-              resultadoFinalId == null ||
-              (candidatos != null && !selecaoCompleta)
+              agindo || resultadoFinalId == null || (candidatos != null && !selecaoCompleta)
             }
-            className="min-h-[48px] rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           >
-            {agindo ? "Apurando..." : "Confirmar apuração"}
-          </button>
+            {candidatos != null ? <Crown size={17} /> : <Trophy size={17} />}
+            {agindo ? "Apurando…" : "Confirmar apuração"}
+          </Botao>
         </>
       )}
-
-      <Link
-        href={`/caixinhas/${caixinhaId}`}
-        className="mt-2 text-center text-sm text-zinc-500 underline"
-      >
-        Voltar para a Caixinha
-      </Link>
     </main>
   );
 }
