@@ -14,6 +14,7 @@ import type {
   ApuracaoResponse,
   ApurarCaixinhaRequest,
   CaixinhaResponse,
+  CaixinhaResumoResponse,
   ConviteResponse,
   CriarCaixinhaRequest,
   EnviarConvitesResponse,
@@ -36,6 +37,20 @@ export async function criarCaixinha(
     throw new Error("POST /caixinhas devolveu corpo vazio (esperado 201)");
   }
   return body;
+}
+
+/**
+ * Lista as Caixinhas do Usuário autenticado, para o dashboard
+ * (Story 6.1, FR-17).
+ *
+ * `GET /caixinhas`. 200 com array de `CaixinhaResumoResponse` (vazio se
+ * o Usuário não participa de nenhuma).
+ */
+export async function listarCaixinhas(): Promise<CaixinhaResumoResponse[]> {
+  const resp = await apiFetch("/caixinhas", { method: "GET" });
+  const body = await readApiResponse<CaixinhaResumoResponse[]>(resp);
+  // 200 com array — corpo vazio (null) seria erro de contrato; trata como [].
+  return body ?? [];
 }
 
 export async function buscarCaixinha(id: number): Promise<CaixinhaResponse> {

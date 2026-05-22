@@ -165,6 +165,22 @@ export interface ItemReembolso {
   estadoEstorno: string | null;
 }
 
+/** Resumo de uma Caixinha no dashboard — item de GET /caixinhas (Story 6.1). */
+export interface CaixinhaResumoResponse {
+  id: number;
+  titulo: string;
+  /** "Brasil × Marrocos". */
+  confronto: string;
+  /** Estado snake_case. */
+  estado: string;
+  pagosConfirmados: number;
+  minimoParticipantes: number;
+  /** Money string decimal. */
+  premioPotencial: string;
+  /** false se a Caixinha está em estado terminal (repassada/cancelada). */
+  ativa: boolean;
+}
+
 /** Resposta de GET /caixinhas/{id}/acerto (Story 4.4, FR-14). */
 export interface AcertoContasResponse {
   /** premio | reembolso | indisponivel. */

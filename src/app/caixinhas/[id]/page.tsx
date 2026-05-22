@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ApiError } from "@/lib/api";
 import { me } from "@/lib/auth";
 import { buscarCaixinha, convidar, encerrarPrazo } from "@/lib/caixinha";
+import TimelineEstado from "@/components/TimelineEstado";
 import type { CaixinhaResponse } from "@/types/caixinha";
 
 /**
@@ -146,15 +147,10 @@ export default function CaixinhaDetalhePage({
         </p>
       </header>
 
-      <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">
-        <p className="text-sm">
-          Caixinha &apos;{caixinha.titulo}&apos; criada! Aguardando{" "}
-          {caixinha.minimoParticipantes} aceites.
-        </p>
-      </div>
+      {/* Story 6.2 (FR-17): timeline de Estado da Caixinha. */}
+      <TimelineEstado estado={caixinha.estado} />
 
       <section className="flex flex-col gap-2 text-sm">
-        <Linha k="Estado" v={caixinha.estado} />
         <Linha k="Valor do ingresso" v={`R$ ${caixinha.valorIngresso}`} />
         <Linha
           k="Mínimo de Participantes"
