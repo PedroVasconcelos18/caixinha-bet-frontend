@@ -38,26 +38,35 @@ Estas regras são **load-bearing** (NFR-1, NFR-3, AR-8). Violar = retrabalho ou 
 
 6. **Estrutura `src/`** fixada: `app/` (rotas), `components/`, `lib/`, `types/`. Não criar pastas paralelas em `src/`.
 
-## Auth (Story 2.1)
+## Auth (auth por senha — 2026-05, substituiu o magic link da Story 2.1)
 
-Autenticação por **e-mail via magic link** (espelha o backend FR-16).
+Autenticação por **e-mail + senha**: login, cadastro explícito
+(nome+CPF+senha) e recuperação de senha. Espelha o backend.
 
-- **Rotas:** `/entrar` (form de e-mail), `/auth/callback?token=...&redirectTo=...`
-  (consome o link, navega para `redirectTo` ou `/`).
+- **Rotas:** `/entrar` (card de 3 modos: login / criar conta / esqueci a
+  senha — tudo client-side, `useState` para o modo); `/redefinir-senha?token=...`
+  (define a nova senha a partir do link do e-mail). Não há mais
+  `/auth/callback`. Login com Google está **fora de escopo** — sem botão.
 - **`middleware.ts`** redireciona qualquer rota não-pública para
   `/entrar?redirectTo=<caminho>` quando o cookie `caixinhabet_sessao`
   está ausente. Verifica **presença**, não validade (validade vive no
   back).
-- **`@/lib/auth`** — `solicitarAcesso`, `consumirCallback`, `me`, `sair`.
-  Todos usam `apiFetch` (= `fetch` com `credentials: "include"`) — sem
-  isso, o navegador não enviaria/aceitaria o cookie cross-origin.
+- **`@/lib/auth`** — `registrar`, `login`, `recuperarSenha`,
+  `redefinirSenha`, `me`, `sair`. Todos usam `apiFetch` (= `fetch` com
+  `credentials: "include"`) — sem isso, o navegador não enviaria/aceitaria
+  o cookie cross-origin. Cadastro/login/redefinição devolvem a `Sessao`
+  (o usuário sai logado); `recuperarSenha` é 204 sempre (anti-enumeração).
 - **`@/lib/api`** — `apiFetch`, `readApiResponse`, `ApiError` (encapsula
-  `ProblemDetails`). Erro do back vira `ApiError` no `throw`.
-- **Tom (NFR-6):** "Hora de entrar", "Confere o e-mail", "Link mágico
-  expirado, solicita um novo" — caloroso, não-burocrático.
+  `ProblemDetails`). Erro do back vira `ApiError` no `throw`. O 409 do
+  cadastro traz `type` `.../email-ja-cadastrado` ou `.../cpf-ja-cadastrado`
+  — ramificar por `e.problem.type`, não pela mensagem.
+- **Validação no front espelha o backend:** CPF (dígitos verificadores) e
+  força de senha (≥8 chars com letra e número) são revalidados no back.
+- **Tom (NFR-6):** "Bem-vindo de volta", "Crie sua conta", "Confere o
+  e-mail" — caloroso, não-burocrático.
 - **Smoke local:** `pnpm dev` + back rodando + Postgres no docker. Abre
-  `/entrar`, manda o e-mail, copia o link `[MAGIC-LINK] ...` do log do
-  back e cola no browser.
+  `/entrar`, cria conta / faz login; para recuperação, copia o link
+  `[MAGIC-LINK] ... /redefinir-senha?token=...` do log do back.
 
 ## Caixinha (Story 2.2)
 

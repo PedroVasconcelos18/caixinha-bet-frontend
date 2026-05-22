@@ -2,8 +2,10 @@
  * Cliente de auth do front (Story 2.1).
  *
  * Espelha os endpoints do backend:
- *  - solicitarAcesso → POST /auth/solicitar-acesso
- *  - consumirCallback → GET /auth/callback?token=...
+ *  - registrar → POST /auth/registrar
+ *  - login → POST /auth/login
+ *  - recuperarSenha → POST /auth/recuperar-senha
+ *  - redefinirSenha → POST /auth/redefinir-senha
  *  - me → GET /auth/me
  *  - sair → POST /auth/sair
  *
@@ -25,46 +27,94 @@ export interface Sessao {
   perfilPagamentoCompleto: boolean;
 }
 
-export async function solicitarAcesso(
-  email: string,
-  redirectTo?: string,
-): Promise<void> {
-  const resp = await apiFetch("/auth/solicitar-acesso", {
+/**
+ * Cadastro explícito (auth por senha). `POST /auth/registrar`. Em sucesso,
+ * o backend já abre a sessão (Set-Cookie) e devolve a `Sessao`.
+ *
+ * Erros possíveis: 400 (CPF inválido / campo faltando), 409 com
+ * `type` `.../email-ja-cadastrado` ou `.../cpf-ja-cadastrado` — o caller
+ * inspeciona `e.problem.type` para destacar o campo certo.
+ */
+export async function registrar(dados: {
+  nomeCompleto: string;
+  cpf: string;
+  email: string;
+  senha: string;
+}): Promise<Sessao> {
+  const resp = await apiFetch("/auth/registrar", {
     method: "POST",
-    body: JSON.stringify({ email, ...(redirectTo ? { redirectTo } : {}) }),
+    body: JSON.stringify(dados),
+  });
+  const body = await readApiResponse<Sessao>(resp);
+  if (!body) {
+    throw new ApiError({
+      type: "about:blank",
+      title: "Resposta inesperada",
+      status: 500,
+      detail: "/auth/registrar devolveu corpo vazio",
+    });
+  }
+  return body;
+}
+
+/**
+ * Login por e-mail + senha. `POST /auth/login`. Em sucesso, abre a sessão
+ * (Set-Cookie) e devolve a `Sessao`. 401 = e-mail ou senha incorretos
+ * (mensagem genérica, anti-enumeração).
+ */
+export async function login(email: string, senha: string): Promise<Sessao> {
+  const resp = await apiFetch("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, senha }),
+  });
+  const body = await readApiResponse<Sessao>(resp);
+  if (!body) {
+    throw new ApiError({
+      type: "about:blank",
+      title: "Resposta inesperada",
+      status: 500,
+      detail: "/auth/login devolveu corpo vazio",
+    });
+  }
+  return body;
+}
+
+/**
+ * Solicita o link de recuperação de senha. `POST /auth/recuperar-senha`.
+ * Responde sempre 204 — não revela se o e-mail tem conta (anti-enumeração).
+ */
+export async function recuperarSenha(email: string): Promise<void> {
+  const resp = await apiFetch("/auth/recuperar-senha", {
+    method: "POST",
+    body: JSON.stringify({ email }),
   });
   await readApiResponse(resp); // 204 = undefined
 }
 
 /**
- * Consome o callback. Não usa `apiFetch` direto porque o navegador segue
- * o 302 automaticamente quando o `redirect` da request fica em "follow"
- * (default) — e aí lemos no JS o que aconteceu via `resp.redirected`.
- *
- * Em caso de erro (404/410), o servidor responde JSON ProblemDetails sem
- * 302, e o `readApiResponse` empacota como ApiError.
+ * Redefine a senha a partir do token recebido por e-mail.
+ * `POST /auth/redefinir-senha`. Em sucesso, abre a sessão e devolve a
+ * `Sessao` (o usuário sai logado). Erros: 404 (token inválido), 410
+ * (token expirado/usado), 400 (senha fraca).
  */
-export async function consumirCallback(token: string): Promise<{
-  redirectTo: string;
-}> {
-  const resp = await apiFetch(
-    `/auth/callback?token=${encodeURIComponent(token)}`,
-    {
-      method: "GET",
-      redirect: "manual",
-    },
-  );
-  // Com redirect: 'manual', a Response tem type 'opaqueredirect' e status 0
-  // quando o navegador detectou o 302. Não conseguimos ler o Location pelo
-  // CORS, mas o cookie já foi gravado (Set-Cookie chega em paralelo).
-  // Solução: depois do callback, perguntamos /auth/me para validar e
-  // navegamos para o redirectTo conhecido pelo cliente (do query param).
-  if (resp.type === "opaqueredirect" || resp.status === 0) {
-    return { redirectTo: "/" };
+export async function redefinirSenha(
+  token: string,
+  senha: string,
+): Promise<Sessao> {
+  const resp = await apiFetch("/auth/redefinir-senha", {
+    method: "POST",
+    body: JSON.stringify({ token, senha }),
+  });
+  const body = await readApiResponse<Sessao>(resp);
+  if (!body) {
+    throw new ApiError({
+      type: "about:blank",
+      title: "Resposta inesperada",
+      status: 500,
+      detail: "/auth/redefinir-senha devolveu corpo vazio",
+    });
   }
-  // Se chegou aqui sem ser opaque, é erro (404/410) — ApiError.
-  await readApiResponse(resp);
-  return { redirectTo: "/" };
+  return body;
 }
 
 export async function me(): Promise<Sessao> {
