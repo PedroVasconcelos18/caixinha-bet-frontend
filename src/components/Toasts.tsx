@@ -118,9 +118,11 @@ function ToastViewport({
   onDispensar: (id: string) => void;
 }) {
   return (
-    // inset garante que em 360px o toast nunca vaze a tela (NFR-3)
+    // inset garante que em 360px o toast nunca vaze a tela (NFR-3).
+    // `!fixed` força o position:fixed contra a regra de `body > *` em
+    // globals.css (que tem especificidade maior e o jogaria para relative).
     <div
-      className="pointer-events-none fixed inset-x-3 top-[76px] z-[90] flex flex-col gap-2.5 sm:left-auto sm:right-5 sm:w-[360px]"
+      className="pointer-events-none !fixed inset-x-3 top-[76px] z-[90] flex flex-col gap-2.5 sm:left-auto sm:right-5 sm:w-[360px]"
       role="status"
       aria-live="polite"
     >

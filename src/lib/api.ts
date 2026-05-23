@@ -94,11 +94,35 @@ export class ApiError extends Error {
  * Lê uma resposta como ProblemDetails se for erro, ou como JSON do recurso
  * se for sucesso. 204 No Content devolve `undefined`. Erros não-RFC-9457
  * (raro) viram ApiError sintética com title genérico.
+ *
+ * @param opts.semRedirect401 — quando `true`, 401 NÃO redireciona para
+ *   `/entrar`. Use em endpoints do fluxo de auth (login/cadastro/troca de
+ *   senha/recuperação) onde 401 é resposta legítima de validação. Default:
+ *   `false` — qualquer 401 num endpoint autenticado redireciona o usuário
+ *   para a tela de login, preservando o caminho atual em `?redirectTo=`.
  */
 export async function readApiResponse<T = unknown>(
   resp: Response,
+  opts: { semRedirect401?: boolean } = {},
 ): Promise<T | undefined> {
   if (resp.status === 204) return undefined;
+
+  if (resp.status === 401 && !opts.semRedirect401 && typeof window !== "undefined") {
+    const atual = window.location.pathname + window.location.search;
+    // Evita loop: se já estou em /entrar, não redireciona — deixa o erro fluir.
+    if (window.location.pathname !== "/entrar") {
+      const url = `/entrar?redirectTo=${encodeURIComponent(atual)}`;
+      window.location.assign(url);
+      // Throw mesmo assim para abortar o caller — a navegação acima é
+      // assíncrona; sem o throw, código depois desta linha rodaria.
+      throw new ApiError({
+        type: "about:blank",
+        title: "Sessão expirada",
+        status: 401,
+        detail: "Redirecionando para o login…",
+      });
+    }
+  }
 
   const texto = await resp.text();
   if (!resp.ok) {

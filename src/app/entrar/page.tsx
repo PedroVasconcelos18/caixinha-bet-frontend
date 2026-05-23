@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { registrar, login, recuperarSenha } from "@/lib/auth";
+import { reenviarVerificacao } from "@/lib/email-verificacao";
 
 /**
  * Tela de entrada (auth por senha, 2026-05 — substitui o magic link).
@@ -73,6 +74,23 @@ function forcaSenha(p: string): number {
 }
 
 const ROTULO_FORCA = ["", "Fraca", "Razoável", "Boa", "Forte"];
+
+/** Idade ≥ 18 e não-futura — espelha o VO {@code DataNascimento} do back. */
+function idadeValida(yyyyMmDd: string): boolean {
+  if (!yyyyMmDd) return false;
+  const d = new Date(yyyyMmDd);
+  if (Number.isNaN(d.getTime())) return false;
+  const hoje = new Date();
+  if (d > hoje) return false;
+  const idade =
+    hoje.getFullYear() -
+    d.getFullYear() -
+    (hoje.getMonth() < d.getMonth() ||
+    (hoje.getMonth() === d.getMonth() && hoje.getDate() < d.getDate())
+      ? 1
+      : 0);
+  return idade >= 18;
+}
 
 function redirectTo(): string {
   if (typeof window === "undefined") return "/";
@@ -358,6 +376,11 @@ function Login({
   const [conectado, setConectado] = useState(true);
   const [estado, setEstado] = useState<"idle" | "enviando" | "erro">("idle");
   const [erro, setErro] = useState<string | null>(null);
+  const [erroEmailNaoVerificado, setErroEmailNaoVerificado] = useState<
+    string | null
+  >(null);
+  const [reenviando, setReenviando] = useState(false);
+  const [reenviado, setReenviado] = useState(false);
 
   const podeEnviar = email.includes("@") && senha.length > 0;
 
@@ -366,16 +389,38 @@ function Login({
     if (!podeEnviar) return;
     setEstado("enviando");
     setErro(null);
+    setErroEmailNaoVerificado(null);
+    setReenviado(false);
     try {
       await login(email.trim(), senha);
       window.location.assign(redirectTo());
     } catch (e) {
       setEstado("erro");
+      if (
+        e instanceof ApiError &&
+        e.problem.type?.includes("email-nao-verificado")
+      ) {
+        const emailAlvo =
+          (e.problem.email as string | undefined) ?? email.trim();
+        setErroEmailNaoVerificado(emailAlvo);
+        return;
+      }
       setErro(
         e instanceof ApiError
           ? (e.problem.detail ?? e.problem.title)
           : "Algo deu errado. Tente de novo.",
       );
+    }
+  }
+
+  async function reenviar() {
+    if (!erroEmailNaoVerificado) return;
+    setReenviando(true);
+    try {
+      await reenviarVerificacao(erroEmailNaoVerificado);
+      setReenviado(true);
+    } finally {
+      setReenviando(false);
     }
   }
 
@@ -448,6 +493,27 @@ function Login({
 
       {erro && <ErroAuth mensagem={erro} />}
 
+      {erroEmailNaoVerificado && (
+        <div className="mb-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-[12.5px] text-amber">
+          <p className="font-semibold">Confirme seu e-mail antes de entrar.</p>
+          <p className="mt-1 text-muted">
+            Enviamos um link para <b className="text-text">{erroEmailNaoVerificado}</b>.
+          </p>
+          {reenviado ? (
+            <p className="mt-2 text-green">Link reenviado — confira sua caixa.</p>
+          ) : (
+            <button
+              type="button"
+              onClick={reenviar}
+              disabled={reenviando}
+              className="mt-2 min-h-[36px] rounded-lg border border-amber/40 px-3 text-amber hover:bg-amber/10 disabled:opacity-50"
+            >
+              {reenviando ? "Reenviando…" : "Reenviar verificação"}
+            </button>
+          )}
+        </div>
+      )}
+
       <BotaoPrimario type="submit" disabled={!podeEnviar || estado === "enviando"}>
         {estado === "enviando" ? (
           <>
@@ -482,19 +548,24 @@ function Cadastro({ onTrocar }: { onTrocar: () => void }) {
   const [cpf, setCpf] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+  const [nascimento, setNascimento] = useState("");
   const [verSenha, setVerSenha] = useState(false);
   const [aceito, setAceito] = useState(false);
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
-  const [estado, setEstado] = useState<"idle" | "enviando" | "erro">("idle");
+  const [estado, setEstado] = useState<"idle" | "enviando" | "enviado" | "erro">(
+    "idle",
+  );
   const [erro, setErro] = useState<string | null>(null);
+  const [reenviando, setReenviando] = useState(false);
 
   const nomeOk = nome.trim().length >= 2;
   const cpfOk = cpfValido(cpf);
   const emailOk = email.includes("@");
   const score = forcaSenha(senha);
-  // Força mínima espelha o backend (Senha): score ≥ 2.
   const senhaOk = senha.length >= 8 && /[a-zA-Z]/.test(senha) && /\d/.test(senha);
-  const podeEnviar = nomeOk && cpfOk && emailOk && senhaOk && aceito;
+  const nascimentoOk = idadeValida(nascimento);
+  const podeEnviar =
+    nomeOk && cpfOk && emailOk && senhaOk && nascimentoOk && aceito;
 
   const erroNome = tocado.nome && !nomeOk ? "Informe seu nome." : undefined;
   const erroCpf = tocado.cpf && !cpfOk ? "Informe um CPF válido." : undefined;
@@ -504,10 +575,20 @@ function Cadastro({ onTrocar }: { onTrocar: () => void }) {
     tocado.senha && !senhaOk
       ? "Use 8+ caracteres com letras e números."
       : undefined;
+  const erroNascimento =
+    tocado.nascimento && !nascimentoOk
+      ? "Você precisa ter 18 anos ou mais."
+      : undefined;
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
-    setTocado({ nome: true, cpf: true, email: true, senha: true });
+    setTocado({
+      nome: true,
+      cpf: true,
+      email: true,
+      senha: true,
+      nascimento: true,
+    });
     if (!podeEnviar) return;
     setEstado("enviando");
     setErro(null);
@@ -517,8 +598,9 @@ function Cadastro({ onTrocar }: { onTrocar: () => void }) {
         cpf: cpf.replace(/\D/g, ""),
         email: email.trim(),
         senha,
+        dataNascimento: nascimento,
       });
-      window.location.assign(redirectTo());
+      setEstado("enviado");
     } catch (e) {
       setEstado("erro");
       setErro(
@@ -527,6 +609,50 @@ function Cadastro({ onTrocar }: { onTrocar: () => void }) {
           : "Algo deu errado. Tente de novo.",
       );
     }
+  }
+
+  async function reenviar() {
+    setReenviando(true);
+    try {
+      await reenviarVerificacao(email.trim());
+    } finally {
+      setReenviando(false);
+    }
+  }
+
+  if (estado === "enviado") {
+    return (
+      <div className="flex flex-col items-center text-center">
+        <span className="mb-4 grid h-14 w-14 place-items-center rounded-full bg-green/15 text-green">
+          <Mail size={26} />
+        </span>
+        <h2 className="font-display text-[28px] leading-tight tracking-wide">
+          Confira seu e-mail
+        </h2>
+        <p className="mt-2 text-sm text-muted">
+          Enviamos um link de verificação para{" "}
+          <b className="text-text">{email}</b>. Confira a caixa de entrada e a
+          pasta de spam.
+        </p>
+        <div className="mt-5 flex w-full flex-col gap-2">
+          <button
+            type="button"
+            onClick={reenviar}
+            disabled={reenviando}
+            className="min-h-[44px] rounded-xl border border-line2 bg-surface px-4 text-sm font-semibold text-text hover:border-green hover:text-green disabled:opacity-50"
+          >
+            {reenviando ? "Reenviando…" : "Reenviar"}
+          </button>
+          <button
+            type="button"
+            onClick={onTrocar}
+            className="min-h-[44px] text-sm font-semibold text-green hover:underline"
+          >
+            Voltar para entrar
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -582,6 +708,22 @@ function Cadastro({ onTrocar }: { onTrocar: () => void }) {
           value={cpf}
           onChange={(e) => setCpf(formatarCpf(e.target.value))}
           onBlur={() => setTocado((t) => ({ ...t, cpf: true }))}
+        />
+      </CampoIcone>
+
+      <CampoIcone
+        id="ca-nascimento"
+        label="Data de nascimento"
+        icone={<IdCard size={17} />}
+        erro={erroNascimento}
+      >
+        <InputCru
+          id="ca-nascimento"
+          type="date"
+          autoComplete="bday"
+          value={nascimento}
+          onChange={(e) => setNascimento(e.target.value)}
+          onBlur={() => setTocado((t) => ({ ...t, nascimento: true }))}
         />
       </CampoIcone>
 

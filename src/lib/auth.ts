@@ -23,38 +23,42 @@ export interface Sessao {
   nomeCompleto: string | null;
   /** v5 FR-16: CPF (só dígitos) do perfil de pagamento, ou `null`. */
   cpf: string | null;
+  /** Minha Conta (2026-05): ISO date "YYYY-MM-DD" ou null para legados. */
+  dataNascimento: string | null;
+  /** Minha Conta: telefone só com dígitos (10/11), ou null. */
+  telefone: string | null;
+  cidade: string | null;
+  bio: string | null;
+  /** Path relativo `/auth/me/foto?v=...` (cache-buster) ou null. */
+  fotoUrl: string | null;
+  /** Minha Conta: false após cadastro novo, true após click no link. */
+  emailVerificado: boolean;
   /** v5 Story 3.2: true se nome+CPF+chave PIX estão todos preenchidos. */
   perfilPagamentoCompleto: boolean;
 }
 
 /**
- * Cadastro explícito (auth por senha). `POST /auth/registrar`. Em sucesso,
- * o backend já abre a sessão (Set-Cookie) e devolve a `Sessao`.
+ * Cadastro explícito (Minha Conta, 2026-05). `POST /auth/registrar`.
  *
- * Erros possíveis: 400 (CPF inválido / campo faltando), 409 com
- * `type` `.../email-ja-cadastrado` ou `.../cpf-ja-cadastrado` — o caller
- * inspeciona `e.problem.type` para destacar o campo certo.
+ * Resposta: 202 Accepted sem cookie — o backend dispara link de
+ * verificação de e-mail. O usuário só fica logado após clicar no link
+ * (rota `/verificar-email`).
+ *
+ * Erros possíveis: 400 (CPF inválido, idade <18, etc.), 409 com `type`
+ * `.../email-ja-cadastrado` ou `.../cpf-ja-cadastrado`.
  */
 export async function registrar(dados: {
   nomeCompleto: string;
   cpf: string;
   email: string;
   senha: string;
-}): Promise<Sessao> {
+  dataNascimento: string; // "YYYY-MM-DD"
+}): Promise<void> {
   const resp = await apiFetch("/auth/registrar", {
     method: "POST",
     body: JSON.stringify(dados),
   });
-  const body = await readApiResponse<Sessao>(resp);
-  if (!body) {
-    throw new ApiError({
-      type: "about:blank",
-      title: "Resposta inesperada",
-      status: 500,
-      detail: "/auth/registrar devolveu corpo vazio",
-    });
-  }
-  return body;
+  await readApiResponse(resp); // 202 → undefined
 }
 
 /**
@@ -67,7 +71,8 @@ export async function login(email: string, senha: string): Promise<Sessao> {
     method: "POST",
     body: JSON.stringify({ email, senha }),
   });
-  const body = await readApiResponse<Sessao>(resp);
+  // 401 legítimo aqui = credenciais incorretas; não redireciona (já está em /entrar).
+  const body = await readApiResponse<Sessao>(resp, { semRedirect401: true });
   if (!body) {
     throw new ApiError({
       type: "about:blank",

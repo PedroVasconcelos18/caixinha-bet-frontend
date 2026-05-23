@@ -16,7 +16,11 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 const COOKIE_SESSAO = "caixinhabet_sessao";
 
-const ROTAS_PUBLICAS = new Set<string>(["/entrar"]);
+const ROTAS_PUBLICAS = new Set<string>([
+  "/entrar",
+  "/verificar-email",
+  "/redefinir-senha",
+]);
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
