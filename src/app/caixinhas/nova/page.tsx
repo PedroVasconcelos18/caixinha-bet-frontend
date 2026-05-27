@@ -69,6 +69,34 @@ const INGRESSO_MIN = "5.00";
 const PASSOS = ["Confronto", "Resultados", "Financeiro", "Prazos", "Convidados", "Revisão"];
 const RE_EMAIL = /\S+@\S+\.\S+/;
 
+/* Mapa de nomes de campos do contrato (camelCase) → rótulo humano em pt-BR.
+   Usado para humanizar as violações 422 vindas do back, que chegam como
+   strings cruas no formato "campoCamelCase: mensagem". */
+const ROTULOS_CAMPO: Record<string, string> = {
+  titulo: "Título",
+  ladoA: "Time mandante",
+  ladoB: "Time visitante",
+  valorIngresso: "Valor de ingresso",
+  minimoParticipantes: "Mínimo de participantes",
+  numeroGanhadores: "Nº de ganhadores",
+  prazoEntrada: "Prazo de entrada",
+  dataApuracao: "Data de apuração",
+  rotulosResultados: "Resultados possíveis",
+  resultadosPossiveis: "Resultados possíveis",
+  emailsConvidados: "Convidados",
+};
+
+/** Humaniza uma violação 422 do back ("campoCamelCase: msg" → "Campo: Msg"). */
+function humanizarViolacao(raw: string): string {
+  const sep = raw.indexOf(":");
+  if (sep === -1) return raw;
+  const campo = raw.slice(0, sep).trim();
+  const msg = raw.slice(sep + 1).trim();
+  const rotulo = ROTULOS_CAMPO[campo] ?? campo;
+  const msgFinal = msg.charAt(0).toUpperCase() + msg.slice(1);
+  return `${rotulo}: ${msgFinal}`;
+}
+
 /* ----------------------------------------------------------------------- */
 /* Prazos — datas como `date` + `time` separados.                          */
 /*                                                                          */
@@ -80,14 +108,10 @@ const RE_EMAIL = /\S+@\S+\.\S+/;
 /* `confirmar()` e a validação cross-field fiquem inalterados.              */
 /* ----------------------------------------------------------------------- */
 
-/** Combina data + hora numa string `datetime-local`; vazia se faltar algum. */
-function juntarDataHora(data: string, hora: string): string {
-  return data && hora ? `${data}T${hora}` : "";
-}
-
-/** Data local de hoje (`YYYY-MM-DD`) para o atributo `min` do `date`. */
-function hojeLocal(): string {
+/** Data local com offset em dias (`YYYY-MM-DD`). `0` = hoje, `1` = amanhã. */
+function dataLocal(offsetDias = 0): string {
   const n = new Date();
+  n.setDate(n.getDate() + offsetDias);
   const mes = String(n.getMonth() + 1).padStart(2, "0");
   const dia = String(n.getDate()).padStart(2, "0");
   return `${n.getFullYear()}-${mes}-${dia}`;
@@ -97,10 +121,21 @@ export default function NovaCaixinhaPage() {
   const router = useRouter();
   const { notificar } = useToast();
   const [etapa, setEtapa] = useState<Etapa>(1);
-  const [d, setD] = useState<Dados>(VAZIO);
+  // Default da Data limite de entrada: amanhã (sem hora — só a parte data).
+  // String "YYYY-MM-DDT" é estado intermediário válido (data preenchida,
+  // hora não). `validarEtapa()` exige hora explícita antes de continuar.
+  // Lazy init garante que `dataLocal` rode na primeira montagem.
+  const [d, setD] = useState<Dados>(() => ({
+    ...VAZIO,
+    prazoEntrada: `${dataLocal(1)}T`,
+  }));
   const [emailIn, setEmailIn] = useState("");
   const [submetendo, setSubmetendo] = useState(false);
   const [erros, setErros] = useState<string[]>([]);
+  /** Cabeçalho amigável do callout de erro (vem do `problem.detail` do back).
+   *  Quando vazio, o callout mostra só a lista de erros (caso da validação
+   *  inline do wizard, que não tem `detail`). */
+  const [tituloErro, setTituloErro] = useState<string>("");
 
   function validarEtapa(): string[] {
     const e: string[] = [];
@@ -135,16 +170,20 @@ export default function NovaCaixinhaPage() {
         e.push("Nº de Ganhadores não pode ser maior que o Mínimo de Participantes.");
       }
     } else if (etapa === 4) {
-      if (!d.prazoEntrada) e.push("Prazo de entrada é obrigatório.");
-      if (!d.dataApuracao) e.push("Data de apuração é obrigatória.");
+      // String pode estar parcial ("YYYY-MM-DDT" sem hora) — só vale como
+      // preenchida quando bate o formato completo.
+      const prazoOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.prazoEntrada);
+      const apuracaoOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.dataApuracao);
+      if (!prazoOk) e.push("Prazo de entrada (data e hora) é obrigatório.");
+      if (!apuracaoOk) e.push("Data de apuração (data e hora) é obrigatória.");
       // Prazo de entrada não pode ser no passado: ele é imutável após a
       // criação e um prazo já vencido nasce com o palpite congelado.
-      if (d.prazoEntrada && new Date(d.prazoEntrada) <= new Date()) {
+      if (prazoOk && new Date(d.prazoEntrada) <= new Date()) {
         e.push("O prazo de entrada deve ser uma data futura.");
       }
       if (
-        d.prazoEntrada &&
-        d.dataApuracao &&
+        prazoOk &&
+        apuracaoOk &&
         new Date(d.dataApuracao) <= new Date(d.prazoEntrada)
       ) {
         e.push("Data de apuração deve ser depois do prazo de entrada.");
@@ -156,14 +195,17 @@ export default function NovaCaixinhaPage() {
   function proxima() {
     const e = validarEtapa();
     if (e.length > 0) {
+      setTituloErro("");
       setErros(e);
       return;
     }
+    setTituloErro("");
     setErros([]);
     setEtapa((etapa + 1) as Etapa);
   }
 
   function anterior() {
+    setTituloErro("");
     setErros([]);
     setEtapa((etapa - 1) as Etapa);
   }
@@ -179,6 +221,7 @@ export default function NovaCaixinhaPage() {
 
   async function confirmar() {
     setSubmetendo(true);
+    setTituloErro("");
     setErros([]);
     try {
       const created = await criarCaixinha({
@@ -203,11 +246,15 @@ export default function NovaCaixinhaPage() {
       if (e instanceof ApiError) {
         const violations = (e.problem as { violations?: string[] }).violations;
         if (Array.isArray(violations) && violations.length > 0) {
-          setErros(violations);
+          // Cabeçalho amigável + lista humanizada (campos em pt-BR).
+          setTituloErro(e.problem.title || "Não foi possível criar a caixinha.");
+          setErros(violations.map(humanizarViolacao));
         } else {
+          setTituloErro("");
           setErros([e.problem.detail ?? e.problem.title]);
         }
       } else {
+        setTituloErro("");
         setErros(["Algo deu errado. Tente de novo."]);
       }
     }
@@ -254,7 +301,13 @@ export default function NovaCaixinhaPage() {
       {erros.length > 0 && (
         <div className="mb-4">
           <Callout tom="warn" icone={<AlertTriangle size={18} />}>
-            <ul role="alert" className="space-y-0.5">
+            {tituloErro && (
+              <div className="mb-1.5 font-bold text-text">{tituloErro}</div>
+            )}
+            {tituloErro && (
+              <div className="mb-1 text-[13px]">Corrija os itens abaixo e tente de novo:</div>
+            )}
+            <ul role="alert" className="list-disc space-y-0.5 pl-5">
               {erros.map((e, i) => (
                 <li key={i}>{e}</li>
               ))}
@@ -426,14 +479,14 @@ export default function NovaCaixinhaPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <CampoDataHora
                 label="Data limite de entrada"
-                hint="Último dia para aceitar e pagar (dd/mm/aaaa)"
-                minData={hojeLocal()}
+                hint="Último dia para aceitar e pagar"
+                valor={d.prazoEntrada}
                 onChange={(v) => setD({ ...d, prazoEntrada: v })}
               />
               <CampoDataHora
                 label="Data de apuração do resultado"
-                hint="Quando o vencedor será definido (dd/mm/aaaa)"
-                minData={hojeLocal()}
+                hint="Quando o vencedor será definido"
+                valor={d.dataApuracao}
                 onChange={(v) => setD({ ...d, dataApuracao: v })}
               />
             </div>
@@ -552,59 +605,128 @@ function CalcPotencial({ valorIngresso, minimo }: { valorIngresso: string; minim
 }
 
 /* ----------------------------------------------------------------------- */
-/* CampoDataHora — par de inputs `date` + `time` (etapa 4 / Prazos).        */
+/* CampoDataHora — inputs `dd/mm/aaaa` + `HH:MM` mascarados (etapa 4).      */
 /*                                                                          */
-/* NÃO usa <Campo> (que é <label>): um <label> não deve envolver múltiplos  */
-/* controles. O `date` é nativo (máscara segue o locale, mas o rótulo       */
-/* "dd/mm/aaaa" deixa o formato esperado explícito); o `time` é sempre 24h. */
-/*                                                                          */
-/* Estado de `data` e `hora` vive AQUI, não no wizard: combinar os dois     */
-/* numa só string e perder a parte ainda-vazia faria o campo já preenchido  */
-/* esvaziar sozinho enquanto o usuário ainda digita. Para fora, propaga a   */
-/* string `YYYY-MM-DDTHH:mm` (vazia enquanto incompleta) — o que o wizard   */
-/* espera em `prazoEntrada`/`dataApuracao`.                                 */
+/* É um campo CONTROLADO: a prop `valor` é a fonte da verdade e segue o    */
+/* formato "YYYY-MM-DDTHH:mm" do wizard (pode ser parcial: "YYYY-MM-DDT",  */
+/* "T20:30", "T", ""). O `useState` interno guarda só o BRUTO digitado     */
+/* (com máscara aplicada) para preservar passos intermediários da          */
+/* digitação — ex: usuário digita "2" e a máscara devolve "2" antes de     */
+/* virar "26/05/2026" completo. Esse draft NÃO é fonte da verdade — quando */
+/* o pai re-monta o componente (mudar de etapa), o estado é re-inicializado*/
+/* a partir do `valor`, então não se perde o que estava preenchido.        */
 /* ----------------------------------------------------------------------- */
 function CampoDataHora({
   label,
   hint,
-  minData,
+  valor,
   onChange,
 }: {
   label: string;
   hint: string;
-  minData: string;
+  /** Estado externo no formato "YYYY-MM-DDTHH:mm" (possivelmente parcial). */
+  valor: string;
   onChange: (v: string) => void;
 }) {
-  const [data, setData] = useState("");
-  const [hora, setHora] = useState("");
+  const [dataIsoInicial, horaInicial] = partirValor(valor);
+  // Draft local — preserva digitações parciais ("2", "26/0", etc) entre
+  // re-renders. Inicializado a partir do `valor` (lazy) para sobreviver à
+  // remontagem do componente quando se troca de etapa do wizard.
+  const [dataBruto, setDataBruto] = useState(() => formatarDataBR(dataIsoInicial));
+  const [horaBruto, setHoraBruto] = useState(() => horaInicial);
 
-  function atualizar(novaData: string, novaHora: string) {
-    setData(novaData);
-    setHora(novaHora);
-    onChange(juntarDataHora(novaData, novaHora));
+  function emitir(novaDataBruto: string, novaHoraBruto: string) {
+    const iso = brParaIsoData(novaDataBruto);
+    // Só propaga hora quando completa (HH:MM = 5 chars). Digitações
+    // intermediárias ("14", "14:3") emitem hora vazia.
+    const hora = novaHoraBruto.length === 5 ? novaHoraBruto : "";
+    onChange(`${iso}T${hora}`);
   }
 
+  function aoDigitarData(v: string) {
+    const mascarado = mascararData(v);
+    setDataBruto(mascarado);
+    emitir(mascarado, horaBruto);
+  }
+
+  function aoDigitarHora(v: string) {
+    const mascarado = mascararHora(v);
+    setHoraBruto(mascarado);
+    emitir(dataBruto, mascarado);
+  }
+
+  /* Inputs de texto com máscara JS — formato BR fixo (`dd/mm/aaaa` + `HH:MM`
+     24h) independente do locale do navegador. */
   return (
     <div className="flex flex-col">
       <span className="mb-2 text-[13px] font-semibold">{label}</span>
       <div className="flex gap-2">
         <Input
-          type="date"
-          aria-label={`${label} — data`}
-          value={data}
-          min={minData}
-          onChange={(e) => atualizar(e.target.value, hora)}
+          type="text"
+          aria-label={`${label} — data (dd/mm/aaaa)`}
+          value={dataBruto}
+          onChange={(e) => aoDigitarData(e.target.value)}
+          placeholder="dd/mm/aaaa"
+          inputMode="numeric"
+          maxLength={10}
         />
         <Input
-          type="time"
-          aria-label={`${label} — hora`}
-          value={hora}
-          onChange={(e) => atualizar(data, e.target.value)}
+          type="text"
+          aria-label={`${label} — hora (24h, HH:MM)`}
+          value={horaBruto}
+          onChange={(e) => aoDigitarHora(e.target.value)}
+          placeholder="HH:MM"
+          inputMode="numeric"
+          maxLength={5}
         />
       </div>
       <span className="mt-1.5 text-[11.5px] leading-snug text-muted">{hint}</span>
     </div>
   );
+}
+
+/** "YYYY-MM-DDTHH:mm" → ["YYYY-MM-DD", "HH:MM"]; partes faltantes → "". */
+function partirValor(v: string): [string, string] {
+  const idx = v.indexOf("T");
+  if (idx === -1) return [v, ""];
+  return [v.slice(0, idx), v.slice(idx + 1)];
+}
+
+/** "YYYY-MM-DD" → "dd/mm/aaaa"; vazia/inválida → "". */
+function formatarDataBR(yyyymmdd: string): string {
+  if (!yyyymmdd) return "";
+  const [y, m, d] = yyyymmdd.split("-");
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y}`;
+}
+
+/** "dd/mm/aaaa" → "YYYY-MM-DD"; incompleta/inválida → "". */
+function brParaIsoData(ddmmaaaa: string): string {
+  const partes = ddmmaaaa.split("/");
+  if (partes.length !== 3) return "";
+  const [d, m, y] = partes;
+  if (d.length !== 2 || m.length !== 2 || y.length !== 4) return "";
+  // Validação leve: dia 01-31, mês 01-12. Não checa fim-de-mês (deixa pro
+  // back / validarEtapa). Datas absurdas viram "" e travam o "Continuar".
+  const di = Number(d);
+  const mi = Number(m);
+  if (!di || di < 1 || di > 31 || !mi || mi < 1 || mi > 12) return "";
+  return `${y}-${m}-${d}`;
+}
+
+/** Aplica máscara `dd/mm/aaaa` enquanto o usuário digita. Aceita só dígitos. */
+function mascararData(valor: string): string {
+  const apenasNumeros = valor.replace(/\D/g, "").slice(0, 8);
+  if (apenasNumeros.length <= 2) return apenasNumeros;
+  if (apenasNumeros.length <= 4) return `${apenasNumeros.slice(0, 2)}/${apenasNumeros.slice(2)}`;
+  return `${apenasNumeros.slice(0, 2)}/${apenasNumeros.slice(2, 4)}/${apenasNumeros.slice(4)}`;
+}
+
+/** Aplica máscara `HH:MM` enquanto o usuário digita. Aceita só dígitos. */
+function mascararHora(valor: string): string {
+  const apenasNumeros = valor.replace(/\D/g, "").slice(0, 4);
+  if (apenasNumeros.length <= 2) return apenasNumeros;
+  return `${apenasNumeros.slice(0, 2)}:${apenasNumeros.slice(2)}`;
 }
 
 /* ----------------------------------------------------------------------- */

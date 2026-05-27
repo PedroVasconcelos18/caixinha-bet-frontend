@@ -54,6 +54,10 @@
 
 html {
   background: var(--color-bg);
+  /* Sinaliza ao navegador que a UI é dark. Sem isso, pickers nativos
+     (calendário do <input type="date">, dropdown do <select>, scrollbars)
+     são renderizados em paleta clara e ficam ilegíveis sobre nosso tema. */
+  color-scheme: dark;
 }
 
 body {

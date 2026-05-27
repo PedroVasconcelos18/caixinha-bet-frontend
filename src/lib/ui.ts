@@ -66,25 +66,108 @@ export function isEstadoTerminal(estado: string): boolean {
 /* Bandeiras — emoji por nome de seleção, com normalização de acentos.      */
 /* ----------------------------------------------------------------------- */
 
+/**
+ * 48 seleções da Copa do Mundo 2026 (Canadá/México/EUA), mais alguns nomes
+ * tradicionais (Itália, Rússia) que não se classificaram mas aparecem em
+ * amistosos/Eurocopa. Chaves SEM acento (normalizadas via NFD em `bandeiraDe`)
+ * e em minúsculas. Aliases comuns inclusos (ex.: "eua" → 🇺🇸, "coreia" → 🇰🇷).
+ */
 const BANDEIRAS: Record<string, string> = {
+  // CONMEBOL (6)
   brasil: "🇧🇷",
-  marrocos: "🇲🇦",
   argentina: "🇦🇷",
+  uruguai: "🇺🇾",
+  colombia: "🇨🇴",
+  paraguai: "🇵🇾",
+  equador: "🇪🇨",
+
+  // UEFA (16)
   inglaterra: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
   franca: "🇫🇷",
-  alemanha: "🇩🇪",
-  portugal: "🇵🇹",
-  espanha: "🇪🇸",
-  "estados unidos": "🇺🇸",
   croacia: "🇭🇷",
-  uruguai: "🇺🇾",
+  portugal: "🇵🇹",
+  noruega: "🇳🇴",
+  alemanha: "🇩🇪",
+  holanda: "🇳🇱",
+  "paises baixos": "🇳🇱",
+  suica: "🇨🇭",
+  escocia: "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
+  espanha: "🇪🇸",
+  austria: "🇦🇹",
+  belgica: "🇧🇪",
+  "bosnia e herzegovina": "🇧🇦",
+  bosnia: "🇧🇦",
+  suecia: "🇸🇪",
+  turquia: "🇹🇷",
+  "republica tcheca": "🇨🇿",
+  tcheca: "🇨🇿",
+  chequia: "🇨🇿",
+
+  // CAF (9)
+  marrocos: "🇲🇦",
+  tunisia: "🇹🇳",
+  egito: "🇪🇬",
+  argelia: "🇩🇿",
+  gana: "🇬🇭",
+  "cabo verde": "🇨🇻",
+  "africa do sul": "🇿🇦",
+  senegal: "🇸🇳",
+  "costa do marfim": "🇨🇮",
+
+  // AFC (8)
   japao: "🇯🇵",
+  "coreia do sul": "🇰🇷",
+  coreia: "🇰🇷",
+  australia: "🇦🇺",
+  ira: "🇮🇷",
+  "ira (republica islamica)": "🇮🇷",
+  jordania: "🇯🇴",
+  uzbequistao: "🇺🇿",
+  catar: "🇶🇦",
+  qatar: "🇶🇦",
+  "arabia saudita": "🇸🇦",
+
+  // CONCACAF (6)
+  "estados unidos": "🇺🇸",
+  eua: "🇺🇸",
+  usa: "🇺🇸",
   mexico: "🇲🇽",
   canada: "🇨🇦",
-  holanda: "🇳🇱",
-  belgica: "🇧🇪",
+  curacao: "🇨🇼",
+  panama: "🇵🇦",
+  haiti: "🇭🇹",
+
+  // OFC (1)
+  "nova zelandia": "🇳🇿",
+
+  // Repescagem Intercontinental (2)
+  "republica democratica do congo": "🇨🇩",
+  "rd congo": "🇨🇩",
+  "rdc congo": "🇨🇩",
+  iraque: "🇮🇶",
+
+  // Tradicionais que NÃO se classificaram à Copa 2026 mas aparecem em
+  // amistosos/Eurocopa/Copa América — úteis para caixinhas fora do Mundial.
   italia: "🇮🇹",
-  colombia: "🇨🇴",
+  russia: "🇷🇺",
+  chile: "🇨🇱",
+  peru: "🇵🇪",
+  venezuela: "🇻🇪",
+  bolivia: "🇧🇴",
+  polonia: "🇵🇱",
+  dinamarca: "🇩🇰",
+  servia: "🇷🇸",
+  ucrania: "🇺🇦",
+  grecia: "🇬🇷",
+  romenia: "🇷🇴",
+  hungria: "🇭🇺",
+  "irlanda do norte": "🇬🇧",
+  irlanda: "🇮🇪",
+  "pais de gales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+  gales: "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+  nigeria: "🇳🇬",
+  camaroes: "🇨🇲",
+  china: "🇨🇳",
 };
 
 /**

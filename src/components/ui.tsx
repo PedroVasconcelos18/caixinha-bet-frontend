@@ -211,13 +211,17 @@ export function Campo({
   );
 }
 
-/** Input estilizado do design — altura ≥44px (NFR-3). */
+/** Input estilizado do design — altura ≥44px (NFR-3).
+ *
+ * Cursor pointer no ícone do calendário (date/time/datetime-local). A cor
+ * branca do ícone vem de `color-scheme: dark` no `html` (globals.css). */
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className={cx(
         "min-h-[44px] w-full rounded-xl border border-line2 bg-bg2 px-3.5 text-sm text-text outline-none transition",
         "placeholder:text-[#4c5870] focus:border-green focus:ring-[3px] focus:ring-green/15",
+        "[&::-webkit-calendar-picker-indicator]:cursor-pointer",
         className,
       )}
       {...rest}
