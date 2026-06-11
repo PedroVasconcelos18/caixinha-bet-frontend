@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Mail,
   Lock,
@@ -217,7 +218,30 @@ function Spinner() {
 /* Página                                                                */
 /* ==================================================================== */
 export default function EntrarPage() {
-  const [modo, setModo] = useState<Modo>("login");
+  return (
+    <Suspense
+      fallback={
+        <main className="cx-fade grid min-h-[calc(100vh-180px)] place-items-center">
+          <p className="text-muted">Carregando…</p>
+        </main>
+      }
+    >
+      <EntrarConteudo />
+    </Suspense>
+  );
+}
+
+function EntrarConteudo() {
+  const searchParams = useSearchParams();
+  // Convidado sem conta chega via `?redirectTo=/convites/…` (middleware): abre
+  // direto na aba "Criar conta", já que provavelmente ainda não tem cadastro.
+  // Derivado dos search params sob <Suspense> (mesmo padrão de verificar-email)
+  // — sem leitura de `window` no render e sem divergência de hidratação.
+  const [modo, setModo] = useState<Modo>(() =>
+    (searchParams.get("redirectTo") ?? "").startsWith("/convites")
+      ? "cadastro"
+      : "login",
+  );
 
   return (
     <main className="cx-fade grid min-h-[calc(100vh-180px)] grid-cols-1 content-center items-center gap-8 md:grid-cols-[1.05fr_1fr] md:gap-10">
